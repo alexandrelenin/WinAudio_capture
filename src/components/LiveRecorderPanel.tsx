@@ -18,17 +18,29 @@ import {
   Info,
   ShieldCheck,
   Zap,
+  Settings,
+  Layers,
 } from "lucide-react";
 import { AudioCaptureEngine } from "../utils/audioRecorder";
-import { AudioSourceType, AudioMarker, MeetingRecord, TranscriptSegment } from "../types";
+import {
+  AudioSourceType,
+  AudioMarker,
+  MeetingRecord,
+  TranscriptSegment,
+  MeetingTemplateType,
+  AISettings,
+} from "../types";
 import { formatTime, formatBytes } from "../utils/audioEncoder";
 import { saveMeetingToDB } from "../utils/db";
 import { analyzeMeetingLocallyOffline } from "../utils/offlineAnalyzer";
+import { MEETING_TEMPLATES } from "../utils/aiSettings";
 import confetti from "canvas-confetti";
 
 interface LiveRecorderPanelProps {
   onMeetingSaved: (meeting: MeetingRecord) => void;
   onOpenWindowsGuide: () => void;
+  onOpenAISettings: () => void;
+  aiSettings: AISettings;
   audioEngineRef: React.MutableRefObject<AudioCaptureEngine | null>;
   isRecording: boolean;
   setIsRecording: (rec: boolean) => void;
@@ -39,6 +51,8 @@ interface LiveRecorderPanelProps {
 export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   onMeetingSaved,
   onOpenWindowsGuide,
+  onOpenAISettings,
+  aiSettings,
   audioEngineRef,
   isRecording,
   setIsRecording,
@@ -46,6 +60,9 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   setRecordingTime,
 }) => {
   const [sourceType, setSourceType] = useState<AudioSourceType>("dual_mix");
+  const [selectedTemplate, setSelectedTemplate] = useState<MeetingTemplateType>(
+    aiSettings.defaultTemplate || "general"
+  );
   const [meetingTitle, setMeetingTitle] = useState<string>("");
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [markers, setMarkers] = useState<AudioMarker[]>([]);
@@ -53,8 +70,13 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   const [liveSegments, setLiveSegments] = useState<TranscriptSegment[]>([]);
   const [interimText, setInterimText] = useState<string>("");
   const [offlineNotes, setOfflineNotes] = useState<string>("");
-  const [tagsInput, setTagsInput] = useState<string>("Requisitos, Arquitetura, Windows");
-  const [autoAiTranscribe, setAutoAiTranscribe] = useState<boolean>(true);
+  const [tagsInput, setTagsInput] = useState<string>("Reunião, Alinhamento, Ata");
+  const [autoAiTranscribe, setAutoAiTranscribe] = useState<boolean>(
+    aiSettings.autoProcessWithAiOnRecordEnd
+  );
+  const [enableLiveBrowserSpeech, setEnableLiveBrowserSpeech] = useState<boolean>(
+    aiSettings.enableLiveBrowserSpeech
+  );
   const [systemVol, setSystemVol] = useState<number>(1.0);
   const [micVol, setMicVol] = useState<number>(1.0);
   const [markerLabel, setMarkerLabel] = useState<string>("");
@@ -66,6 +88,15 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Sync settings when modified from external modal
+  useEffect(() => {
+    setAutoAiTranscribe(aiSettings.autoProcessWithAiOnRecordEnd);
+    setEnableLiveBrowserSpeech(aiSettings.enableLiveBrowserSpeech);
+    if (!isRecording && aiSettings.defaultTemplate) {
+      setSelectedTemplate(aiSettings.defaultTemplate);
+    }
+  }, [aiSettings, isRecording]);
 
   // Initialize engine instance
   useEffect(() => {
@@ -103,7 +134,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
 
       ctx.clearRect(0, 0, width, height);
 
-      // Dark background gradient (High Density)
+      // Dark background gradient
       const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
       bgGrad.addColorStop(0, "#0E1015");
       bgGrad.addColorStop(1, "#0A0B0D");
@@ -164,7 +195,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
           waveX += sliceWidth;
         }
         ctx.stroke();
-        ctx.shadowBlur = 0; // reset
+        ctx.shadowBlur = 0;
 
         // Overall level text / meter badge
         ctx.fillStyle = overallLevel > 70 ? "#ef4444" : "#10b981";
@@ -186,7 +217,9 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         ctx.font = "12px Inter, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(
-          isPaused ? "GRAVAÇÃO EM SEGUNDO PLANO PAUSADA" : "MODO CONTÍNUO: PRONTO PARA GRAVAR EM SEGUNDO PLANO",
+          isPaused
+            ? "GRAVAÇÃO EM SEGUNDO PLANO PAUSADA"
+            : "MODO CONTÍNUO: PRONTO PARA GRAVAR SOM DO PC OU MICROFONE",
           width / 2,
           height / 2 - 12
         );
@@ -225,7 +258,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
       } else if (e.altKey && (e.key === "m" || e.key === "M")) {
         e.preventDefault();
         if (isRecording) {
-          handleAddQuickMarker("Requisito Rápido (Alt+M)", "requisito");
+          handleAddQuickMarker("Ponto-Chave (Alt+M)", "requisito");
         }
       }
     };
@@ -237,7 +270,8 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
     setErrorMessage(null);
     try {
       if (!meetingTitle.trim()) {
-        const defaultTitle = `Reunião ${new Date().toLocaleDateString("pt-BR")} - ${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+        const tmplObj = MEETING_TEMPLATES.find((t) => t.id === selectedTemplate);
+        const defaultTitle = `${tmplObj?.label || "Reunião"} - ${new Date().toLocaleDateString("pt-BR")} (${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`;
         setMeetingTitle(defaultTitle);
       }
 
@@ -248,17 +282,22 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
       audioEngineRef.current.setSystemVolume(systemVol);
       audioEngineRef.current.setMicVolume(micVol);
 
-      await audioEngineRef.current.startRecording(sourceType, (chunk, isFinal, seg) => {
-        if (isFinal) {
-          setLiveTranscript((prev) => (prev ? prev + " " : "") + chunk);
-          setInterimText("");
-          if (seg) {
-            setLiveSegments((prev) => [...prev, seg]);
-          }
-        } else {
-          setInterimText(chunk);
-        }
-      });
+      await audioEngineRef.current.startRecording(
+        sourceType,
+        enableLiveBrowserSpeech
+          ? (chunk, isFinal, seg) => {
+              if (isFinal) {
+                setLiveTranscript((prev) => (prev ? prev + " " : "") + chunk);
+                setInterimText("");
+                if (seg) {
+                  setLiveSegments((prev) => [...prev, seg]);
+                }
+              } else {
+                setInterimText(chunk);
+              }
+            }
+          : undefined
+      );
 
       setIsRecording(true);
       setIsPaused(false);
@@ -312,9 +351,10 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         .filter(Boolean);
 
       let finalTranscript = (result.liveTranscript || liveTranscript).trim();
-      let finalSegments: TranscriptSegment[] = result.transcriptSegments && result.transcriptSegments.length > 0
-        ? result.transcriptSegments
-        : liveSegments;
+      let finalSegments: TranscriptSegment[] =
+        result.transcriptSegments && result.transcriptSegments.length > 0
+          ? result.transcriptSegments
+          : liveSegments;
 
       // Base offline analysis
       let initialAnalysis = analyzeMeetingLocallyOffline(
@@ -324,15 +364,16 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         result.markers
       );
 
-      // Trigger automatic AI transcription & concise summarization if enabled
+      // Trigger automatic AI transcription & summarization according to template if enabled
       if (autoAiTranscribe) {
-        setProcessingStatusText("Executando IA Gemini 3.7: Transcrição & Resumo Conciso...");
+        const provName = aiSettings.provider.replace("_", " ").toUpperCase();
+        setProcessingStatusText(`Processando com IA (${provName} • ${aiSettings.model}): Transcrição & Ata...`);
         try {
-          // Convert audio blob to base64 if audio exists
+          // Convert audio blob to base64 if audio exists (< 30MB)
           let audioBase64: string | undefined;
           let mimeType: string = "audio/mp3";
 
-          if (result.mp3Blob && result.mp3Blob.size > 0 && result.mp3Blob.size < 15 * 1024 * 1024) {
+          if (result.mp3Blob && result.mp3Blob.size > 0 && result.mp3Blob.size < 28 * 1024 * 1024) {
             const buffer = await result.mp3Blob.arrayBuffer();
             const bytes = new Uint8Array(buffer);
             let binary = "";
@@ -344,21 +385,26 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
             mimeType = result.mp3Blob.type || "audio/mp3";
           }
 
-          const res = await fetch("/api/transcribe-and-summarize", {
+          const res = await fetch("/api/analyze-meeting", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              title,
+              meetingTitle: title,
               audioBase64,
               mimeType,
               transcript: finalTranscript,
-              notes: offlineNotes,
-              markers: result.markers,
+              offlineNotes,
+              tags,
+              duration: formatTime(result.duration),
+              template: selectedTemplate,
+              aiSettings,
             }),
           });
 
           if (res.ok) {
-            const aiData = await res.json();
+            const resJson = await res.json();
+            const aiData = resJson.data || resJson;
+
             if (aiData.transcription) {
               finalTranscript = aiData.transcription;
             }
@@ -369,19 +415,26 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
             initialAnalysis = {
               ...initialAnalysis,
               mode: "ai",
+              template: selectedTemplate,
               executiveSummary: aiData.executiveSummary || aiData.conciseSummary || initialAnalysis.executiveSummary,
               conciseSummary: aiData.conciseSummary || aiData.executiveSummary || initialAnalysis.conciseSummary,
+              formalMinutes: aiData.formalMinutes,
               keyPoints: aiData.keyDiscussionPoints || aiData.keyPoints || initialAnalysis.keyPoints,
               keyDiscussionPoints: aiData.keyDiscussionPoints || initialAnalysis.keyDiscussionPoints,
+              decisions: aiData.decisions || initialAnalysis.decisions,
               actionItems: aiData.actionItems || initialAnalysis.actionItems,
               functionalRequirements: aiData.functionalRequirements || initialAnalysis.functionalRequirements,
               nonFunctionalRequirements: aiData.nonFunctionalRequirements || initialAnalysis.nonFunctionalRequirements,
+              businessRules: aiData.businessRules || initialAnalysis.businessRules,
               userStories: aiData.userStories || initialAnalysis.userStories,
               studyGuide: aiData.studyGuide || initialAnalysis.studyGuide,
+              ideas: aiData.ideas,
+              oneOnOne: aiData.oneOnOne,
+              salesInsights: aiData.salesInsights,
             };
           }
         } catch (aiErr) {
-          console.warn("AI Auto-transcription fallback to offline heuristic:", aiErr);
+          console.warn("AI Auto-analysis fallback to local heuristic:", aiErr);
         }
       }
 
@@ -400,6 +453,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         offlineNotes,
         markers: result.markers,
         tags,
+        template: selectedTemplate,
         favorite: false,
         analysis: initialAnalysis,
         chatHistory: [],
@@ -427,32 +481,44 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
     }
   };
 
+  const currentTmpl = MEETING_TEMPLATES.find((t) => t.id === selectedTemplate);
+
   return (
     <div className="space-y-4">
-      {/* Top Banner with Windows Capabilities */}
+      {/* Top Banner with Windows Capabilities & Active AI Engine */}
       <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm relative overflow-hidden">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 relative z-10">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">
                 <Radio className="w-3 h-3 text-blue-400 animate-pulse" />
-                Windows 10/11 Direct Audio Capture
+                Windows Audio Engine
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                 <ShieldCheck className="w-3 h-3" />
-                Modo Contínuo & WakeLock
+                Gravação em Segundo Plano
               </span>
-              <span className="text-[11px] text-[#8E929E]">• Formato MP3 Nativo</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/15 text-purple-400 border border-purple-500/30 font-mono">
+                <Sparkles className="w-3 h-3" />
+                IA: {aiSettings.model}
+              </span>
             </div>
             <h2 className="text-base font-bold text-white tracking-tight">
-              Gravador Contínuo de Áudio & Extrator de Requisitos
+              Gravador de Áudio & Assistente de Reuniões Multitemplate
             </h2>
             <p className="text-xs text-[#9CA3AF] mt-0.5 max-w-2xl">
-              Grave o som contínuo do PC (Zoom, Teams, Meet, Discord, YouTube) em segundo plano, transcreva com IA e gere resumos automáticos dos pontos discutidos e especificações de requisitos.
+              Grave o som contínuo do PC (Zoom, Teams, Meet, Discord, YouTube) em segundo plano, gere transcrições e atas executivas adaptadas ao objetivo da sua reunião.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenAISettings}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#1C1F26] hover:bg-[#252830] text-[#C4C7D0] hover:text-white border border-[#2A2D35] transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <Settings className="w-3.5 h-3.5 text-amber-400" />
+              <span>Configurar IA</span>
+            </button>
             <button
               onClick={onOpenWindowsGuide}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#1C1F26] hover:bg-[#252830] text-[#C4C7D0] hover:text-white border border-[#2A2D35] transition flex items-center gap-1.5 cursor-pointer"
@@ -478,9 +544,48 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
 
       {/* Main Recording Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: Controls & Visualizer (7 cols) */}
+        {/* Left: Controls, Template Selector & Visualizer (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
-          {/* Source Selection Card */}
+          {/* 1. Template Selector Card */}
+          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-blue-400" />
+                Template & Objetivo da Reunião
+              </label>
+              <span className="text-[11px] text-[#6B7280]">Adapta o resumo da IA</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {MEETING_TEMPLATES.map((tmpl) => {
+                const isSelected = selectedTemplate === tmpl.id;
+                return (
+                  <button
+                    key={tmpl.id}
+                    type="button"
+                    disabled={isRecording}
+                    onClick={() => setSelectedTemplate(tmpl.id)}
+                    className={`p-2.5 rounded-lg text-left border transition-all flex flex-col justify-between gap-1.5 ${
+                      isSelected
+                        ? "bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40"
+                        : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
+                    } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-base">{tmpl.icon}</span>
+                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-[#EDEDED] truncate">{tmpl.shortLabel}</div>
+                      <div className="text-[10px] text-[#8E929E] line-clamp-1">{tmpl.description}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Source Selection Card */}
           <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
@@ -610,24 +715,6 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               </div>
             )}
 
-            {/* Crucial Windows Capture Instructions Box */}
-            {(sourceType === "system" || sourceType === "dual_mix") && !isRecording && (
-              <div className="p-3 rounded-lg bg-blue-950/30 border border-blue-500/25 text-xs text-[#C4C7D0] space-y-1.5">
-                <div className="flex items-center gap-1.5 font-bold text-blue-300 text-[11px]">
-                  <Info className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                  <span>Como liberar a captura de som do Windows no Chrome/Edge:</span>
-                </div>
-                <ul className="text-[11px] space-y-1 text-[#9CA3AF] list-disc list-inside">
-                  <li>
-                    Na janelinha do navegador que abrir, escolha <strong className="text-white">"Tela inteira"</strong> ou a <strong className="text-white">"Aba"</strong> do Meet/Teams/YouTube.
-                  </li>
-                  <li>
-                    <strong className="text-amber-300">OBRIGATÓRIO:</strong> Marque a caixinha <strong className="text-white">"Compartilhar áudio do sistema"</strong> (no canto inferior esquerdo).
-                  </li>
-                </ul>
-              </div>
-            )}
-
             {/* Meeting Title Input */}
             <div className="pt-1">
               <label className="block text-[11px] font-semibold text-[#C4C7D0] mb-1">
@@ -637,31 +724,49 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 type="text"
                 value={meetingTitle}
                 onChange={(e) => setMeetingTitle(e.target.value)}
-                placeholder="Ex: Alinhamento de Requisitos - Módulo Financeiro & Pix"
+                placeholder={`Ex: ${currentTmpl?.label} - Alinhamento Semanal`}
                 disabled={isRecording}
                 className="w-full bg-[#0E1015] border border-[#22252D] focus:border-blue-500 rounded-lg px-3 py-1.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none disabled:opacity-60"
               />
             </div>
 
-            {/* Auto AI Summarization toggle */}
-            <div className="pt-1 flex items-center justify-between border-t border-[#22252D]">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoAiTranscribe}
-                  onChange={(e) => setAutoAiTranscribe(e.target.checked)}
-                  disabled={isRecording}
-                  className="rounded border-[#2A2D35] bg-[#0E1015] text-blue-600 focus:ring-blue-500 accent-blue-600"
-                />
-                <span className="text-xs text-[#C4C7D0] font-semibold flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  Transcrever & Gerar Resumo com IA automaticamente ao concluir
-                </span>
-              </label>
+            {/* Toggles: Auto AI Summarization & Live Browser Speech */}
+            <div className="pt-2 border-t border-[#22252D] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={autoAiTranscribe}
+                    onChange={(e) => setAutoAiTranscribe(e.target.checked)}
+                    disabled={isRecording}
+                    className="rounded border-[#2A2D35] bg-[#0E1015] text-blue-600 focus:ring-blue-500 accent-blue-600 cursor-pointer"
+                  />
+                  <span className="text-xs text-[#C4C7D0] font-semibold flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Processar com IA ({aiSettings.model}) ao concluir
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableLiveBrowserSpeech}
+                    onChange={(e) => setEnableLiveBrowserSpeech(e.target.checked)}
+                    disabled={isRecording}
+                    className="rounded border-[#2A2D35] bg-[#0E1015] text-blue-600 focus:ring-blue-500 accent-blue-600 cursor-pointer"
+                  />
+                  <span className="text-xs text-[#C4C7D0] flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                    Transcrição Contínua ao Vivo (Web Speech nativo - 0 tokens)
+                  </span>
+                </label>
+              </div>
             </div>
           </div>
 
-          {/* Audio Visualizer Stage */}
+          {/* 3. Audio Visualizer Stage */}
           <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -745,16 +850,16 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
             <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => handleAddQuickMarker("Requisito Funcional Detectado", "requisito")}
+                onClick={() => handleAddQuickMarker("Ponto-Chave / Destaque", "requisito")}
                 disabled={!isRecording}
                 className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 transition disabled:opacity-50 flex items-center gap-1 cursor-pointer"
               >
-                <span>⚙️ + Requisito (RF)</span>
+                <span>⭐ + Ponto-Chave</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => handleAddQuickMarker("Decisão de Arquitetura / Negócio", "decisao")}
+                onClick={() => handleAddQuickMarker("Decisão Firmada", "decisao")}
                 disabled={!isRecording}
                 className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition disabled:opacity-50 flex items-center gap-1 cursor-pointer"
               >
@@ -819,9 +924,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                       </span>
                       <span className="text-xs">{m.label}</span>
                     </div>
-                    <span className="text-[10px] uppercase font-bold text-[#8E929E]">
-                      {m.type}
-                    </span>
+                    <span className="text-[10px] uppercase font-bold text-[#8E929E]">{m.type}</span>
                   </div>
                 ))}
               </div>
@@ -829,10 +932,10 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
           </div>
         </div>
 
-        {/* Right: Live Transcription & Notes (5 cols) */}
+        {/* Right: Live Transcription Stream & Notepad (5 cols) */}
         <div className="lg:col-span-5 space-y-4">
           {/* Live Transcript Stream */}
-          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-2.5 flex flex-col h-[320px]">
+          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-2.5 flex flex-col h-[340px]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <FileText className="w-3.5 h-3.5 text-blue-400" />
@@ -841,12 +944,26 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 </span>
               </div>
               <span className="text-[10px] text-[#6B7280] font-mono">
-                {liveTranscript.split(/\s+/).filter(Boolean).length} palavras
+                {enableLiveBrowserSpeech
+                  ? `${liveTranscript.split(/\s+/).filter(Boolean).length} palavras`
+                  : "Desativado (Economia de CPU)"}
               </span>
             </div>
 
             <div className="flex-1 bg-[#0A0B0D] border border-[#22252D] rounded-lg p-3 overflow-y-auto text-xs leading-relaxed text-[#C4C7D0] font-sans space-y-2">
-              {liveTranscript ? (
+              {!enableLiveBrowserSpeech ? (
+                <div className="text-center pt-20 space-y-2">
+                  <div className="w-9 h-9 mx-auto rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                    <HardDrive className="w-4 h-4" />
+                  </div>
+                  <p className="text-xs text-[#EDEDED] font-semibold">
+                    Transcrição ao Vivo desativada
+                  </p>
+                  <p className="text-[11px] text-[#8E929E] max-w-xs mx-auto">
+                    O áudio MP3 cristalino está sendo gravado perfeitamente. A transcrição completa e a ata executiva serão geradas pelo modelo de IA ({aiSettings.model}) quando você clicar em concluir.
+                  </p>
+                </div>
+              ) : liveTranscript ? (
                 <div className="space-y-1.5">
                   {liveSegments.map((s) => (
                     <div key={s.id} className="flex items-start gap-1.5">
@@ -859,14 +976,14 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                   {!liveSegments.length && <p className="whitespace-pre-wrap">{liveTranscript}</p>}
                 </div>
               ) : (
-                <p className="text-[#6B7280] italic text-center pt-16 text-xs">
+                <p className="text-[#6B7280] italic text-center pt-20 text-xs">
                   {isRecording
                     ? "Gravando áudio em segundo plano... Fale ou reproduza som no Windows para ver a transcrição em tempo real."
                     : "A transcrição em tempo real contínua será exibida aqui durante a gravação."}
                 </p>
               )}
 
-              {interimText && (
+              {interimText && enableLiveBrowserSpeech && (
                 <span className="text-blue-400 italic bg-blue-500/10 px-1 rounded animate-pulse">
                   {interimText}
                 </span>
@@ -882,13 +999,13 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 <FileText className="w-3.5 h-3.5 text-emerald-400" />
                 Anotações Rápidas & Pauta
               </label>
-              <span className="text-[10px] text-[#6B7280]">Salvo junto ao áudio</span>
+              <span className="text-[10px] text-[#6B7280]">Salvo com o áudio</span>
             </div>
 
             <textarea
               value={offlineNotes}
               onChange={(e) => setOfflineNotes(e.target.value)}
-              placeholder="Digite pontos da pauta, links, nomes de participantes ou observações rápidas..."
+              placeholder="Digite tópicos da pauta, participantes ou observações rápidas..."
               rows={4}
               className="w-full bg-[#0E1015] border border-[#22252D] rounded-lg p-2.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none focus:border-blue-500 resize-none"
             />
@@ -899,7 +1016,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 type="text"
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="Ex: Requisitos, Sprint 14, Financeiro, Windows"
+                placeholder="Ex: Reunião, Diretoria, Financeiro, Windows"
                 className="w-full bg-[#0E1015] border border-[#22252D] rounded-lg px-2.5 py-1 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -909,3 +1026,4 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
     </div>
   );
 };
+

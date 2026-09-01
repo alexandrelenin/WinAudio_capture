@@ -1,5 +1,16 @@
 import React from "react";
-import { Mic, Volume2, HardDrive, Sparkles, HelpCircle, Layers, Search } from "lucide-react";
+import {
+  Mic,
+  Volume2,
+  HardDrive,
+  Sparkles,
+  HelpCircle,
+  Search,
+  Settings,
+  Laptop,
+  Cpu,
+} from "lucide-react";
+import { AISettings } from "../types";
 
 interface HeaderProps {
   activeTab: "recorder" | "library" | "details";
@@ -9,6 +20,9 @@ interface HeaderProps {
   hasSelectedMeeting: boolean;
   onOpenWindowsGuide: () => void;
   onOpenSearch: () => void;
+  onOpenAISettings: () => void;
+  onOpenExportApp: () => void;
+  aiSettings?: AISettings;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +33,9 @@ export const Header: React.FC<HeaderProps> = ({
   hasSelectedMeeting,
   onOpenWindowsGuide,
   onOpenSearch,
+  onOpenAISettings,
+  onOpenExportApp,
+  aiSettings,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-[#0E1015]/95 backdrop-blur-md border-b border-[#22252D] text-[#EDEDED] shadow-sm">
@@ -31,10 +48,12 @@ export const Header: React.FC<HeaderProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h1 className="font-bold text-sm tracking-tight text-white flex items-center gap-1.5">
-                WinAudio <span className="text-blue-400 font-medium text-[10px] px-1.5 py-0.2 rounded bg-blue-500/10 border border-blue-500/20">MP3 & Requisitos</span>
+                WinAudio <span className="text-blue-400 font-medium text-[10px] px-1.5 py-0.2 rounded bg-blue-500/10 border border-blue-500/20">MP3 & Reuniões</span>
               </h1>
             </div>
-            <p className="text-[11px] text-[#8E929E] leading-tight hidden sm:block">Captura de Áudio PC • Transcrição • Engenharia de Requisitos</p>
+            <p className="text-[11px] text-[#8E929E] leading-tight hidden sm:block">
+              Captura PC & Mic • Transcrição • Templates de Reunião
+            </p>
           </div>
         </div>
 
@@ -84,20 +103,44 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </nav>
 
-        {/* Windows, Search & Helper Actions */}
+        {/* Action buttons: AI settings, Windows exe/mobile, Search, Windows Guide */}
         <div className="flex items-center gap-2">
+          {/* AI Settings button with active model tag */}
+          <button
+            onClick={onOpenAISettings}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#14161B] hover:bg-[#1E212A] text-[#C4C7D0] hover:text-white border border-[#22252D] hover:border-blue-500/40 transition cursor-pointer"
+            title="Configurar Provedor de IA (Gemini, OpenAI, Anthropic, Groq, Ollama) e Chaves de API"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">IA & Modelos</span>
+            {aiSettings?.model && (
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-500/10 border border-blue-500/20 text-blue-400 hidden xl:inline">
+                {aiSettings.model.replace("gemini-", "").replace("claude-", "")}
+              </span>
+            )}
+          </button>
+
+          {/* Windows / Mobile Export guide button */}
+          <button
+            onClick={onOpenExportApp}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#14161B] hover:bg-[#1E212A] text-[#C4C7D0] hover:text-white border border-[#22252D] hover:border-purple-500/40 transition cursor-pointer"
+            title="Gerar Versão .EXE para Windows ou App para Celular"
+          >
+            <Laptop className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden lg:inline">.EXE & Celular</span>
+          </button>
+
+          {/* Search Button */}
           <button
             onClick={onOpenSearch}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#14161B] hover:bg-[#1E212A] text-[#C4C7D0] hover:text-white border border-[#22252D] transition cursor-pointer"
             title="Buscar palavras-chave e timecodes (Ctrl + K)"
           >
             <Search className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">Buscar Áudio</span>
-            <kbd className="hidden lg:inline-block px-1.5 py-0.2 rounded bg-[#0A0B0D] border border-[#22252D] text-[10px] text-[#8E929E] font-mono">
-              Ctrl+K
-            </kbd>
+            <span className="hidden sm:inline">Buscar</span>
           </button>
 
+          {/* Windows Guide */}
           <button
             onClick={onOpenWindowsGuide}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#14161B] hover:bg-[#1E212A] text-[#C4C7D0] hover:text-white border border-[#22252D] transition cursor-pointer"
@@ -106,13 +149,9 @@ export const Header: React.FC<HeaderProps> = ({
             <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
             <span className="hidden sm:inline">Guia Windows</span>
           </button>
-
-          <div className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-medium font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-            <span>Offline Ready</span>
-          </div>
         </div>
       </div>
     </header>
   );
 };
+

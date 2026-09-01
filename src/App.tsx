@@ -10,10 +10,13 @@ import { FileManager } from "./components/FileManager";
 import { MeetingDetailsStudio } from "./components/MeetingDetailsStudio";
 import { WindowsGuideModal } from "./components/WindowsGuideModal";
 import { AudioKeywordSearchModal } from "./components/AudioKeywordSearchModal";
+import { AISettingsModal } from "./components/AISettingsModal";
+import { ExportAppModal } from "./components/ExportAppModal";
 import { AudioCaptureEngine } from "./utils/audioRecorder";
-import { MeetingRecord } from "./types";
+import { MeetingRecord, AISettings } from "./types";
 import { getAllMeetingsFromDB, saveMeetingToDB, deleteMeetingFromDB, updateMeetingInDB } from "./utils/db";
 import { getInitialSampleMeeting } from "./utils/sampleData";
+import { getStoredAISettings, saveAISettings } from "./utils/aiSettings";
 import confetti from "canvas-confetti";
 
 export default function App() {
@@ -24,6 +27,9 @@ export default function App() {
   const [recordingTime, setRecordingTime] = useState<string>("00:00");
   const [isWindowsGuideOpen, setIsWindowsGuideOpen] = useState<boolean>(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState<boolean>(false);
+  const [isAISettingsOpen, setIsAISettingsOpen] = useState<boolean>(false);
+  const [isExportAppOpen, setIsExportAppOpen] = useState<boolean>(false);
+  const [aiSettings, setAiSettings] = useState<AISettings>(getStoredAISettings());
   const [activeSeekTimestamp, setActiveSeekTimestamp] = useState<number | null>(null);
   const [isAiAnalyzing, setIsAiAnalyzing] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
@@ -117,7 +123,12 @@ export default function App() {
 
   const handleTriggerAiAnalysis = async (targetMeeting: MeetingRecord) => {
     setIsAiAnalyzing(true);
-    showToast("Enviando áudio e transcrição para IA Gemini 3.7...", "info");
+    const templateToUse = targetMeeting.template || aiSettings.defaultTemplate || "general";
+    const providerLabel = aiSettings.provider === "gemini_server" || aiSettings.provider === "gemini_custom"
+      ? `Gemini (${aiSettings.model})`
+      : `${aiSettings.provider.toUpperCase()} (${aiSettings.model})`;
+
+    showToast(`Enviando áudio e transcrição para IA ${providerLabel}...`, "info");
 
     try {
       let audioBase64: string | undefined = undefined;
@@ -155,12 +166,14 @@ export default function App() {
           duration: targetMeeting.durationFormatted,
           offlineNotes: targetMeeting.offlineNotes,
           tags: targetMeeting.tags,
+          template: templateToUse,
+          aiSettings: aiSettings,
         }),
       });
 
       const resJson = await response.json();
       if (!resJson.success) {
-        throw new Error(resJson.error || "Erro ao processar reunião com Gemini.");
+        throw new Error(resJson.error || "Erro ao processar reunião com a IA.");
       }
 
       const aiData = resJson.data;
@@ -172,6 +185,7 @@ export default function App() {
 
       const updatedMeeting: MeetingRecord = {
         ...targetMeeting,
+        template: templateToUse,
         transcript: aiData.transcription || targetMeeting.transcript,
         analysis: updatedAnalysis,
       };
@@ -185,7 +199,7 @@ export default function App() {
         origin: { y: 0.6 },
       });
 
-      showToast("Análise e Levantamento de Requisitos gerados com sucesso pela IA!", "success");
+      showToast(`Análise gerada com sucesso pela IA (${providerLabel})!`, "success");
     } catch (err: any) {
       console.error("Erro na análise IA:", err);
       showToast(`Falha na análise IA: ${err.message || "Erro desconhecido"}`, "error");
@@ -222,6 +236,9 @@ export default function App() {
         hasSelectedMeeting={!!currentMeeting}
         onOpenWindowsGuide={() => setIsWindowsGuideOpen(true)}
         onOpenSearch={() => setIsSearchModalOpen(true)}
+        onOpenAISettings={() => setIsAISettingsOpen(true)}
+        onOpenExportApp={() => setIsExportAppOpen(true)}
+        aiSettings={aiSettings}
       />
 
       {/* Workspace Body */}
@@ -235,6 +252,7 @@ export default function App() {
             setIsRecording={setIsRecording}
             recordingTime={recordingTime}
             setRecordingTime={setRecordingTime}
+            aiSettings={aiSettings}
           />
         )}
 
@@ -294,6 +312,23 @@ export default function App() {
       <WindowsGuideModal
         isOpen={isWindowsGuideOpen}
         onClose={() => setIsWindowsGuideOpen(false)}
+      />
+
+      {/* AI Engine & Provider Settings Modal */}
+      <AISettingsModal
+        isOpen={isAISettingsOpen}
+        onClose={() => setIsAISettingsOpen(false)}
+        onSettingsSaved={(updated) => {
+          setAiSettings(updated);
+          saveAISettings(updated);
+          showToast(`Configurações de IA salvas: ${updated.provider.toUpperCase()} (${updated.model})`, "success");
+        }}
+      />
+
+      {/* Export & Build Native App Modal (Windows .exe / Mobile) */}
+      <ExportAppModal
+        isOpen={isExportAppOpen}
+        onClose={() => setIsExportAppOpen(false)}
       />
 
       {/* High Density Windows Status Footer */}

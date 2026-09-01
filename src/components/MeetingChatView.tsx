@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Sparkles, Copy, Check, MessageSquare, RefreshCw } from "lucide-react";
 import { MeetingRecord } from "../types";
+import { getStoredAISettings } from "../utils/aiSettings";
 
 interface MeetingChatViewProps {
   meeting: MeetingRecord;
@@ -62,13 +63,16 @@ export const MeetingChatView: React.FC<MeetingChatViewProps> = ({
     setIsLoading(true);
 
     try {
+      const activeAiSettings = getStoredAISettings();
       const response = await fetch("/api/chat-meeting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text.trim(),
+          aiSettings: activeAiSettings,
           meetingContext: {
             title: meeting.title,
+            template: meeting.template || "general",
             executiveSummary: meeting.analysis?.executiveSummary,
             transcript: meeting.transcript,
             functionalRequirements: meeting.analysis?.functionalRequirements,
