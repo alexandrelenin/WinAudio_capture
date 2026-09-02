@@ -1,4 +1,7 @@
-export type AudioSourceType = "system" | "mic" | "dual_mix";
+export type AudioSourceType = "dual_channels" | "dual_mix" | "system" | "mic";
+
+export type RecordMediaType = "audio" | "screen_video";
+export type VideoResolution = "1080p" | "720p" | "4k";
 
 export type MeetingTemplateType =
   | "general"
@@ -41,7 +44,17 @@ export interface TranscriptSegment {
   endTime?: number;
   timeFormatted: string; // e.g. "01:24"
   speaker?: string;
+  speakerRole?: string;
+  channel?: "mic" | "system" | "mixed";
+  confidence?: number;
   text: string;
+}
+
+export interface SpeakerStat {
+  speaker: string;
+  segmentCount: number;
+  estimatedSeconds: number;
+  percentage: number;
 }
 
 export interface KeywordSearchResult {
@@ -156,6 +169,8 @@ export interface MeetingAnalysisData {
   keyDiscussionPoints?: string[];
   keyPoints?: string[];
   decisions?: string[]; // Decisões tomadas
+  participants?: string[]; // Lista de participantes identificados
+  speakerStats?: SpeakerStat[]; // Estatísticas de tempo de fala
   functionalRequirements?: FunctionalRequirement[];
   nonFunctionalRequirements?: NonFunctionalRequirement[];
   businessRules?: BusinessRule[];
@@ -179,13 +194,20 @@ export interface MeetingRecord {
   duration: number; // in seconds
   durationFormatted: string;
   sourceType: AudioSourceType;
+  mediaType?: "audio" | "video";
   audioBlob?: Blob;
   audioUrl?: string;
+  videoBlob?: Blob;
+  videoUrl?: string;
+  videoResolution?: string;
+  videoFps?: number;
   fileSizeFormatted?: string;
-  format: "mp3" | "wav" | "webm";
+  format: "mp3" | "wav" | "webm" | "mp4";
   transcript: string;
   transcriptSegments?: TranscriptSegment[];
+  participants?: string[]; // Participantes informados / identificados
   offlineNotes?: string;
+  closedCaptionsContext?: string; // Legendas coladas do Google Meet / Teams
   markers: AudioMarker[];
   tags: string[];
   favorite: boolean;

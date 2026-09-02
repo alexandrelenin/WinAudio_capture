@@ -15,6 +15,8 @@ import {
   Plus,
   Play,
   FileCode,
+  Film,
+  Video,
 } from "lucide-react";
 import { MeetingRecord } from "../types";
 import { formatTime, formatBytes } from "../utils/audioEncoder";
@@ -45,6 +47,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
 }) => {
   const [search, setSearch] = useState<string>("");
   const [selectedTag, setSelectedTag] = useState<string>("all");
+  const [selectedType, setSelectedType] = useState<"all" | "audio" | "video">("all");
   const [onlyFavorites, setOnlyFavorites] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
 
@@ -59,33 +62,59 @@ export const FileManager: React.FC<FileManagerProps> = ({
       (m.transcript && m.transcript.toLowerCase().includes(search.toLowerCase())) ||
       (m.tags && m.tags.some((t) => t.toLowerCase().includes(search.toLowerCase())));
     const matchesTag = selectedTag === "all" || (m.tags && m.tags.includes(selectedTag));
+    const isVideo = Boolean(m.videoBlob || m.videoUrl || m.mediaType === "video");
+    const matchesType =
+      selectedType === "all" ||
+      (selectedType === "video" && isVideo) ||
+      (selectedType === "audio" && !isVideo);
     const matchesFav = !onlyFavorites || m.favorite;
-    return matchesSearch && matchesTag && matchesFav;
+    return matchesSearch && matchesTag && matchesType && matchesFav;
   });
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    handleProcessAudioFile(files[0]);
+    handleProcessMediaFile(files[0]);
   };
 
-  const handleProcessAudioFile = async (file: File) => {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    let duration = 0;
+  const handleProcessMediaFile = async (file: File) => {
+    const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mkv|mov)$/i.test(file.name);
+    let duration = 60;
 
     try {
-      const audioCtx = new AudioContextClass();
-      const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-      duration = Math.round(audioBuffer.duration);
-      audioCtx.close();
+      if (!isVideo) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        const arrayBuffer = await file.arrayBuffer();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        duration = Math.round(audioBuffer.duration);
+        audioCtx.close();
+      } else {
+        // Estimate or extract video duration
+        const video = document.createElement("video");
+        video.preload = "metadata";
+        video.src = URL.createObjectURL(file);
+        await new Promise((res) => {
+          video.onloadedmetadata = () => {
+            if (video.duration && !isNaN(video.duration)) {
+              duration = Math.round(video.duration);
+            }
+            URL.revokeObjectURL(video.src);
+            res(true);
+          };
+          video.onerror = () => res(false);
+        });
+      }
     } catch (e) {
-      console.warn("Could not calculate duration locally, using estimation:", e);
-      duration = 60; // fallback
+      console.warn("Could not calculate duration locally, using default:", e);
     }
 
     const cleanTitle = file.name.replace(/\.[^/.]+$/, "");
-    const offlineAnalysis = analyzeMeetingLocallyOffline(cleanTitle, "", "Arquivo de áudio importado do Windows.");
+    const offlineAnalysis = analyzeMeetingLocallyOffline(
+      cleanTitle,
+      "",
+      `Arquivo de ${isVideo ? "vídeo de tela" : "áudio"} importado do computador.`
+    );
 
     const newMeeting: MeetingRecord = {
       id: `imported-${Date.now()}`,
@@ -94,13 +123,15 @@ export const FileManager: React.FC<FileManagerProps> = ({
       duration,
       durationFormatted: formatTime(duration),
       sourceType: "system",
-      audioBlob: file,
-      format: file.name.endsWith(".mp3") ? "mp3" : "wav",
+      mediaType: isVideo ? "video" : "audio",
+      audioBlob: !isVideo ? file : undefined,
+      videoBlob: isVideo ? file : undefined,
+      format: isVideo ? "webm" : file.name.endsWith(".mp3") ? "mp3" : "wav",
       fileSizeFormatted: formatBytes(file.size),
       transcript: "",
       offlineNotes: `Arquivo importado: ${file.name}`,
       markers: [],
-      tags: ["Importado", "Áudio"],
+      tags: isVideo ? ["Importado", "Vídeo de Tela"] : ["Importado", "Áudio"],
       favorite: false,
       analysis: offlineAnalysis,
       chatHistory: [],
@@ -121,13 +152,24 @@ export const FileManager: React.FC<FileManagerProps> = ({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Pesquisar reuniões gravadas, transcrições ou tags..."
+            placeholder="Pesquisar gravações de tela, áudios, transcrições ou tags..."
             className="w-full bg-[#0E1015] border border-[#22252D] focus:border-blue-500 rounded-lg pl-8 pr-3 py-1.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none"
           />
         </div>
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Media Type Filter */}
+          <select
+            value={selectedType}
+            onChange={(e) => setSelectedType(e.target.value as any)}
+            className="bg-[#1C1F26] border border-[#2A2D35] rounded-lg px-2.5 py-1.5 text-xs text-[#C4C7D0] focus:outline-none"
+          >
+            <option value="all">Todos os Tipos (Vídeo & Áudio)</option>
+            <option value="video">🎬 Apenas Vídeos de Tela</option>
+            <option value="audio">🎙️ Apenas Áudios (MP3)</option>
+          </select>
+
           {/* Tag filter */}
           {allTags.length > 0 && (
             <select
@@ -147,30 +189,31 @@ export const FileManager: React.FC<FileManagerProps> = ({
           {/* Favorite toggle */}
           <button
             onClick={() => setOnlyFavorites(!onlyFavorites)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 ${
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 cursor-pointer ${
               onlyFavorites
-                ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-                : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white"
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                : "bg-[#1C1F26] text-[#8E929E] hover:text-white border-[#2A2D35]"
             }`}
           >
-            <Star className={`w-3.5 h-3.5 ${onlyFavorites ? "fill-amber-300 text-amber-300" : ""}`} />
+            <Star className={`w-3.5 h-3.5 ${onlyFavorites ? "fill-amber-400 text-amber-400" : ""}`} />
             <span>Favoritos</span>
           </button>
 
-          {/* Import file button */}
+          {/* Import Button */}
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleFileUpload}
-            accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm"
+            accept="audio/*,video/*,.mp3,.wav,.m4a,.webm,.mp4"
             className="hidden"
           />
           <button
+            type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/30 transition cursor-pointer"
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition flex items-center gap-1.5 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Importar Áudio PC</span>
+            <span>Importar Mídia</span>
           </button>
         </div>
       </div>
@@ -185,20 +228,24 @@ export const FileManager: React.FC<FileManagerProps> = ({
         onDrop={(e) => {
           e.preventDefault();
           setIsDragging(false);
-          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            handleProcessAudioFile(e.dataTransfer.files[0]);
+          const files = e.dataTransfer.files;
+          if (files && files.length > 0) {
+            handleProcessMediaFile(files[0]);
           }
         }}
-        className={`border border-dashed rounded-xl p-4 text-center transition-all cursor-pointer ${
-          isDragging
-            ? "border-blue-500 bg-blue-500/10 text-blue-300"
-            : "border-[#2A2D35] hover:border-blue-500/60 bg-[#14161B]/60 text-[#8E929E]"
-        }`}
         onClick={() => fileInputRef.current?.click()}
+        className={`border-2 border-dashed rounded-xl p-5 text-center transition cursor-pointer ${
+          isDragging
+            ? "border-blue-500 bg-blue-500/10"
+            : "border-[#2A2D35] bg-[#14161B]/60 hover:bg-[#14161B] hover:border-[#3E424D]"
+        }`}
       >
-        <FileAudio className="w-6 h-6 mx-auto mb-1 text-blue-400 opacity-90" />
+        <div className="flex items-center justify-center gap-2 text-blue-400 mb-1.5">
+          <Upload className="w-5 h-5" />
+          <Film className="w-4 h-4 text-emerald-400" />
+        </div>
         <p className="text-xs font-semibold text-[#EDEDED]">
-          Arraste e solte arquivos de áudio gravados no Windows (MP3, WAV, M4A, WebM)
+          Arraste e solte gravações de tela ou arquivos de áudio (MP4, WebM, MP3, WAV, M4A)
         </p>
         <p className="text-[11px] text-[#6B7280] mt-0.5">
           Armazenado localmente com segurança offline em seu computador para transcrição e análise IA imediata.
@@ -209,9 +256,9 @@ export const FileManager: React.FC<FileManagerProps> = ({
       {filteredMeetings.length === 0 ? (
         <div className="text-center py-12 bg-[#14161B] border border-[#22252D] rounded-xl p-6 text-[#6B7280] space-y-2">
           <HardDrive className="w-8 h-8 text-[#4B5563] mx-auto" />
-          <h3 className="text-xs font-bold text-[#EDEDED]">Nenhum arquivo de áudio gravado</h3>
+          <h3 className="text-xs font-bold text-[#EDEDED]">Nenhuma gravação encontrada</h3>
           <p className="text-xs text-[#8E929E] max-w-sm mx-auto">
-            Grave uma nova reunião pelo gravador ou importe um arquivo de áudio existente para começar.
+            Grave uma tela ou áudio pelo gravador ou importe um arquivo existente para começar.
           </p>
         </div>
       ) : (
@@ -220,6 +267,7 @@ export const FileManager: React.FC<FileManagerProps> = ({
             const isSelected = selectedMeetingId === m.id;
             const rfsCount = m.analysis?.functionalRequirements?.length || 0;
             const isAiDone = m.analysis?.mode === "ai";
+            const isVideo = Boolean(m.videoBlob || m.videoUrl || m.mediaType === "video");
 
             return (
               <div
@@ -251,9 +299,17 @@ export const FileManager: React.FC<FileManagerProps> = ({
 
                   {/* Badges */}
                   <div className="flex flex-wrap items-center gap-1">
-                    <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      {m.format?.toUpperCase() || "MP3"}
-                    </span>
+                    {isVideo ? (
+                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                        <Film className="w-2.5 h-2.5 text-emerald-400" />
+                        TELA ({m.videoResolution || "1080p"})
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        {m.format?.toUpperCase() || "MP3"}
+                      </span>
+                    )}
+
                     <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#1C1F26] text-[#C4C7D0] border border-[#2A2D35]">
                       {m.durationFormatted}
                     </span>
@@ -289,6 +345,23 @@ export const FileManager: React.FC<FileManagerProps> = ({
 
                   {/* Actions */}
                   <div className="flex items-center gap-1">
+                    {/* Video download if available */}
+                    {m.videoBlob && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const filename = `${m.title.replace(/[^\w\s-]/g, "").replace(/\s+/g, "_")}_tela.webm`;
+                          downloadBlob(m.videoBlob!, filename);
+                        }}
+                        className="p-1 rounded text-emerald-400 hover:text-emerald-300 hover:bg-[#1C1F26]"
+                        title="Baixar Vídeo da Tela (.webm)"
+                      >
+                        <Film className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {/* MP3 download */}
                     {m.audioBlob && (
                       <button
                         type="button"

@@ -11,6 +11,12 @@ import {
   Search,
   X,
   Clock,
+  Video,
+  Maximize2,
+  Minimize2,
+  Pipette,
+  Film,
+  Sparkles,
 } from "lucide-react";
 import { MeetingRecord } from "../types";
 import { formatTime } from "../utils/audioEncoder";
@@ -34,39 +40,71 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [volume, setVolume] = useState<number>(1);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [audioSrc, setAudioSrc] = useState<string>("");
+  const [mediaSrc, setMediaSrc] = useState<string>("");
+  const [videoSrc, setVideoSrc] = useState<string>("");
+  const [showVideoDisplay, setShowVideoDisplay] = useState<boolean>(true);
 
   // In-player keyword search
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Setup blob URL
+  const hasVideo = Boolean(meeting.videoBlob || meeting.videoUrl || meeting.mediaType === "video");
+
+  // Setup URLs
   useEffect(() => {
-    if (meeting.audioBlob) {
-      const url = URL.createObjectURL(meeting.audioBlob);
-      setAudioSrc(url);
-      return () => {
-        URL.revokeObjectURL(url);
-      };
-    } else if (meeting.audioUrl) {
-      setAudioSrc(meeting.audioUrl);
+    let createdAudioUrl: string | null = null;
+    let createdVideoUrl: string | null = null;
+
+    if (meeting.videoBlob) {
+      createdVideoUrl = URL.createObjectURL(meeting.videoBlob);
+      setVideoSrc(createdVideoUrl);
+    } else if (meeting.videoUrl) {
+      setVideoSrc(meeting.videoUrl);
     }
-  }, [meeting.audioBlob, meeting.audioUrl]);
+
+    if (meeting.audioBlob) {
+      createdAudioUrl = URL.createObjectURL(meeting.audioBlob);
+      setMediaSrc(createdAudioUrl);
+    } else if (meeting.audioUrl) {
+      setMediaSrc(meeting.audioUrl);
+    }
+
+    return () => {
+      if (createdAudioUrl) URL.revokeObjectURL(createdAudioUrl);
+      if (createdVideoUrl) URL.revokeObjectURL(createdVideoUrl);
+    };
+  }, [meeting.audioBlob, meeting.audioUrl, meeting.videoBlob, meeting.videoUrl]);
+
+  // Set active media element reference
+  useEffect(() => {
+    if (hasVideo && videoElementRef.current && showVideoDisplay) {
+      mediaRef.current = videoElementRef.current;
+    } else if (audioElementRef.current) {
+      mediaRef.current = audioElementRef.current;
+    } else if (videoElementRef.current) {
+      mediaRef.current = videoElementRef.current;
+    }
+  }, [hasVideo, showVideoDisplay, videoSrc, mediaSrc]);
 
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = playbackRate;
+    if (mediaRef.current) {
+      mediaRef.current.playbackRate = playbackRate;
     }
   }, [playbackRate]);
 
-  // Handle external seek requests (e.g. from keyword search clicks)
+  // Handle external seek requests (e.g. from keyword search clicks or transcript clicks)
   useEffect(() => {
-    if (seekToTimestamp !== undefined && seekToTimestamp !== null && audioRef.current) {
-      audioRef.current.currentTime = seekToTimestamp;
-      setCurrentTime(seekToTimestamp);
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(console.error);
+    if (seekToTimestamp !== undefined && seekToTimestamp !== null) {
+      if (mediaRef.current) {
+        mediaRef.current.currentTime = seekToTimestamp;
+        setCurrentTime(seekToTimestamp);
+        mediaRef.current.play().then(() => setIsPlaying(true)).catch(console.error);
+      }
       if (onClearSeek) onClearSeek();
     }
   }, [seekToTimestamp, onClearSeek]);
@@ -77,21 +115,23 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   }, [meeting, searchQuery]);
 
   const handlePlayPause = () => {
-    if (!audioRef.current) return;
+    const el = mediaRef.current;
+    if (!el) return;
     if (isPlaying) {
-      audioRef.current.pause();
+      el.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.play().catch(console.error);
+      el.play().catch(console.error);
       setIsPlaying(true);
     }
   };
 
   const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
-      if (audioRef.current.duration && !isNaN(audioRef.current.duration)) {
-        setDuration(audioRef.current.duration);
+    const el = mediaRef.current;
+    if (el) {
+      setCurrentTime(el.currentTime);
+      if (el.duration && !isNaN(el.duration)) {
+        setDuration(el.duration);
       }
     }
   };
@@ -99,23 +139,23 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
     setCurrentTime(val);
-    if (audioRef.current) {
-      audioRef.current.currentTime = val;
+    if (mediaRef.current) {
+      mediaRef.current.currentTime = val;
     }
   };
 
   const skipTime = (seconds: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = Math.max(0, Math.min(duration, audioRef.current.currentTime + seconds));
+    if (mediaRef.current) {
+      mediaRef.current.currentTime = Math.max(0, Math.min(duration, mediaRef.current.currentTime + seconds));
     }
   };
 
   const jumpToTimestamp = (timestamp: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = timestamp;
+    if (mediaRef.current) {
+      mediaRef.current.currentTime = timestamp;
       setCurrentTime(timestamp);
       if (!isPlaying) {
-        audioRef.current.play().catch(console.error);
+        mediaRef.current.play().catch(console.error);
         setIsPlaying(true);
       }
     }
@@ -128,17 +168,108 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     }
   };
 
+  const handleDownloadVideo = () => {
+    if (meeting.videoBlob) {
+      const filename = `${meeting.title.replace(/[^\w\s-]/g, "").replace(/\s+/g, "_")}_tela.webm`;
+      downloadBlob(meeting.videoBlob, filename);
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!videoContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      videoContainerRef.current.requestFullscreen().catch(console.error);
+    } else {
+      document.exitFullscreen().catch(console.error);
+    }
+  };
+
+  const togglePiP = async () => {
+    if (!videoElementRef.current) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (document.pictureInPictureEnabled) {
+        await videoElementRef.current.requestPictureInPicture();
+      }
+    } catch (e) {
+      console.warn("PiP error:", e);
+    }
+  };
+
   return (
-    <div className="bg-[#0E1015] border border-[#22252D] rounded-xl p-3.5 shadow-md text-[#EDEDED] space-y-2.5">
-      {audioSrc && (
+    <div className="bg-[#0E1015] border border-[#22252D] rounded-xl p-3.5 shadow-md text-[#EDEDED] space-y-3">
+      {/* Video Screen View Player (if video was recorded) */}
+      {hasVideo && videoSrc && showVideoDisplay && (
+        <div
+          ref={videoContainerRef}
+          className="relative bg-black rounded-lg overflow-hidden border border-[#22252D] group aspect-video max-h-[420px] mx-auto flex items-center justify-center shadow-lg"
+        >
+          <video
+            ref={videoElementRef}
+            src={videoSrc}
+            onTimeUpdate={handleTimeUpdate}
+            onEnded={() => setIsPlaying(false)}
+            onLoadedMetadata={() => {
+              if (videoElementRef.current && videoElementRef.current.duration) {
+                setDuration(videoElementRef.current.duration);
+              }
+            }}
+            onClick={handlePlayPause}
+            className="w-full h-full object-contain cursor-pointer"
+          />
+
+          {/* Video Overlay Badges */}
+          <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none">
+            <span className="px-2 py-0.5 rounded bg-black/70 backdrop-blur-md text-[10px] font-bold text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+              <Film className="w-3 h-3 text-emerald-400" />
+              Vídeo da Tela Gravada ({meeting.videoResolution || "1080p"} {meeting.videoFps ? `• ${meeting.videoFps}fps` : ""})
+            </span>
+          </div>
+
+          {/* Top Right Controls (PiP, Fullscreen) */}
+          <div className="absolute top-2.5 right-2.5 flex items-center gap-1 opacity-80 group-hover:opacity-100 transition">
+            <button
+              type="button"
+              onClick={togglePiP}
+              className="p-1.5 rounded-md bg-black/70 hover:bg-black/90 text-white backdrop-blur-md border border-white/10 transition cursor-pointer"
+              title="Modo Picture-in-Picture (Janela Flutuante)"
+            >
+              <Video className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="p-1.5 rounded-md bg-black/70 hover:bg-black/90 text-white backdrop-blur-md border border-white/10 transition cursor-pointer"
+              title="Tela Cheia"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Center Play/Pause button on hover */}
+          {!isPlaying && (
+            <button
+              type="button"
+              onClick={handlePlayPause}
+              className="absolute inset-0 m-auto w-12 h-12 rounded-full bg-blue-600/90 hover:bg-blue-500 text-white flex items-center justify-center shadow-xl transform group-hover:scale-110 transition cursor-pointer"
+            >
+              <Play className="w-6 h-6 fill-white ml-0.5" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Audio element fallback (when video is not present or user switches to audio-only) */}
+      {(!hasVideo || !showVideoDisplay) && mediaSrc && (
         <audio
-          ref={audioRef}
-          src={audioSrc}
+          ref={audioElementRef}
+          src={mediaSrc}
           onTimeUpdate={handleTimeUpdate}
           onEnded={() => setIsPlaying(false)}
           onLoadedMetadata={() => {
-            if (audioRef.current && audioRef.current.duration) {
-              setDuration(audioRef.current.duration);
+            if (audioElementRef.current && audioElementRef.current.duration) {
+              setDuration(audioElementRef.current.duration);
             }
           }}
         />
@@ -151,13 +282,30 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           <span className="font-bold text-xs text-white truncate max-w-xs sm:max-w-md">
             {meeting.title}
           </span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#1C1F26] text-blue-400 font-mono border border-[#2A2D35]">
-            {meeting.format?.toUpperCase() || "MP3"} • {meeting.fileSizeFormatted || "Local"}
+          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#1C1F26] text-blue-400 font-mono border border-[#2A2D35] flex items-center gap-1">
+            {hasVideo ? <Film className="w-2.5 h-2.5 text-blue-400" /> : null}
+            {hasVideo ? "VÍDEO DA TELA + MP3" : `${meeting.format?.toUpperCase() || "MP3"}`} • {meeting.fileSizeFormatted || "Local"}
           </span>
         </div>
 
-        {/* Search & Download buttons */}
+        {/* Search, Toggle Video & Download buttons */}
         <div className="flex items-center gap-1.5">
+          {hasVideo && (
+            <button
+              type="button"
+              onClick={() => setShowVideoDisplay(!showVideoDisplay)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                showVideoDisplay
+                  ? "bg-blue-600/20 text-blue-300 border-blue-500/40"
+                  : "bg-[#1C1F26] text-[#8E929E] hover:text-white border-[#2A2D35]"
+              }`}
+              title="Alternar entre modo vídeo e áudio compacto"
+            >
+              <Film className="w-3 h-3 text-emerald-400" />
+              <span>{showVideoDisplay ? "Ocultar Vídeo" : "Exibir Vídeo"}</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setIsSearching(!isSearching)}
@@ -169,7 +317,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             title="Buscar palavras-chave nesta gravação"
           >
             <Search className="w-3 h-3 text-blue-400" />
-            <span>Localizar no Áudio</span>
+            <span>Localizar</span>
           </button>
 
           {meeting.markers && meeting.markers.length > 0 && (
@@ -192,6 +340,19 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             </div>
           )}
 
+          {/* Download Video (if available) */}
+          {hasVideo && meeting.videoBlob && (
+            <button
+              onClick={handleDownloadVideo}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition cursor-pointer"
+              title="Baixar gravação de vídeo da tela em WebM/MP4"
+            >
+              <Film className="w-3 h-3" />
+              <span>Baixar Vídeo</span>
+            </button>
+          )}
+
+          {/* Download MP3 */}
           <button
             onClick={handleDownloadMp3}
             className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-sm transition cursor-pointer"
@@ -212,7 +373,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar palavra ou tema neste áudio (ex: prazo, RF01, segurança, arquitetura)..."
+              placeholder="Buscar palavra ou tema neste áudio/vídeo (ex: prazo, RF01, segurança, arquitetura)..."
               autoFocus
               className="flex-1 bg-[#0E1015] border border-[#2A2D35] focus:border-blue-500 rounded-md px-2.5 py-1 text-xs text-white placeholder-[#6B7280] focus:outline-none"
             />
@@ -246,7 +407,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
           {searchQuery && searchHits.length === 0 && (
             <p className="text-[11px] text-[#6B7280] italic">
-              Nenhuma ocorrência encontrada para "{searchQuery}" neste áudio.
+              Nenhuma ocorrência encontrada para "{searchQuery}" neste áudio/vídeo.
             </p>
           )}
         </div>
@@ -355,8 +516,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => {
-              if (audioRef.current) {
-                audioRef.current.muted = !isMuted;
+              if (mediaRef.current) {
+                mediaRef.current.muted = !isMuted;
                 setIsMuted(!isMuted);
               }
             }}
@@ -373,9 +534,9 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             onChange={(e) => {
               const v = parseFloat(e.target.value);
               setVolume(v);
-              if (audioRef.current) {
-                audioRef.current.volume = v;
-                audioRef.current.muted = false;
+              if (mediaRef.current) {
+                mediaRef.current.volume = v;
+                mediaRef.current.muted = false;
                 setIsMuted(false);
               }
             }}

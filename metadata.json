@@ -1,6 +1,6 @@
 {
   "name": "Gravador de Reuniões & Extrator de Requisitos",
-  "description": "Captura áudio do PC e microfone em MP3, transcreve com IA e modo offline, e gera levantamento de requisitos, atas de reunião e materiais de estudo.",
-  "requestFramePermissions": ["microphone"],
+  "description": "Grava tela do PC com áudio e microfone em vídeo HD e MP3, transcreve com IA e modo offline, e gera levantamento de requisitos, atas de reunião e materiais de estudo.",
+  "requestFramePermissions": ["microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

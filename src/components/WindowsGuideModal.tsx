@@ -11,6 +11,7 @@ import {
   ExternalLink,
   ShieldCheck,
   Zap,
+  Film,
 } from "lucide-react";
 
 interface WindowsGuideModalProps {
@@ -32,10 +33,10 @@ export const WindowsGuideModal: React.FC<WindowsGuideModalProps> = ({ isOpen, on
             </div>
             <div>
               <h2 className="text-sm font-bold text-white">
-                Guia de Captura de Áudio no Windows 10 & 11
+                Guia de Gravação de Tela & Áudio no Windows
               </h2>
               <p className="text-[11px] text-[#8E929E]">
-                Como gravar o som de qualquer reunião (Zoom, Teams, Meet, Discord, YouTube)
+                Como gravar a tela, apresentações e o som do PC (Meet, Zoom, Teams, YouTube)
               </p>
             </div>
           </div>
@@ -48,69 +49,87 @@ export const WindowsGuideModal: React.FC<WindowsGuideModalProps> = ({ isOpen, on
           </button>
         </div>
 
-        {/* Step 1: System Audio Capture */}
+        {/* Section 0: Screen Recording */}
         <div className="space-y-2">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-            <Volume2 className="w-3.5 h-3.5" />
-            1. Como Capturar o Áudio Interno do PC (Sem Microfone)
+          <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+            <Film className="w-3.5 h-3.5" />
+            1. Como Gravar a Tela com Áudio Sincronizado (Vídeo HD)
           </h3>
           <div className="bg-[#0E1015] border border-[#22252D] rounded-xl p-3.5 space-y-2 text-xs text-[#C4C7D0] leading-relaxed">
             <div className="flex items-start gap-2">
-              <span className="w-4 h-4 rounded bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-blue-500/30">
+              <span className="w-4 h-4 rounded bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-emerald-500/30">
                 1
               </span>
               <p>
-                No gravador, selecione a fonte <strong>"Áudio do PC"</strong> ou <strong>"Mixagem Dupla"</strong> e clique em <em>Iniciar Captura</em>.
+                No topo do gravador, selecione a opção <strong>"Gravar Tela do PC + Áudio"</strong> e escolha a resolução (1080p ou 720p).
               </p>
             </div>
 
             <div className="flex items-start gap-2">
-              <span className="w-4 h-4 rounded bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-blue-500/30">
+              <span className="w-4 h-4 rounded bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-emerald-500/30">
                 2
               </span>
               <p>
-                Na janela do Windows que abrir, selecione a aba <strong>"Tela Inteira"</strong> (ou a <strong>"Aba"</strong> onde sua reunião está rodando).
+                Ao clicar em <em>Iniciar Gravação</em>, a janela do Windows exibirá as opções: <strong>"Tela Inteira"</strong>, <strong>"Janela"</strong> ou <strong>"Guia do Navegador"</strong>.
               </p>
             </div>
 
             <div className="flex items-start gap-2">
-              <span className="w-4 h-4 rounded bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-blue-500/30">
+              <span className="w-4 h-4 rounded bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 border border-emerald-500/30">
                 3
               </span>
-              <p className="bg-blue-500/10 p-2 rounded-lg border border-blue-500/30 text-blue-200 font-medium">
-                ⚠️ <strong>Passo Crucial:</strong> Marque a caixa de seleção <u>"Compartilhar áudio do sistema"</u> (ou "Também compartilhar áudio da aba") no canto inferior da janela antes de clicar em Compartilhar.
+              <p className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/30 text-emerald-200 font-medium">
+                🎬 <strong>Áudio Sincronizado:</strong> Marque a caixa <u>"Compartilhar áudio do sistema"</u> no canto inferior esquerdo para que o som da reunião/vídeo seja gravado junto com a imagem.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Step 2: Dual Mix */}
-        <div className="space-y-1.5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-            <Mic className="w-3.5 h-3.5" />
-            2. Modo Mixagem Dupla (PC + Seu Microfone)
+        {/* Section 1: System Audio Capture */}
+        <div className="space-y-2">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+            <Volume2 className="w-3.5 h-3.5" />
+            2. Como Capturar o Áudio Interno do PC (Apenas Áudio MP3)
           </h3>
-          <p className="text-xs text-[#C4C7D0] leading-relaxed bg-[#0E1015] p-3 rounded-lg border border-[#22252D]">
-            O modo <strong>Mixagem Dupla</strong> combina os outros participantes que falam pelo computador com a sua própria voz falada no microfone, permitindo gravar a reunião completa com controle individual de volume!
-          </p>
+          <div className="bg-[#0E1015] border border-[#22252D] rounded-xl p-3.5 space-y-2 text-xs text-[#C4C7D0] leading-relaxed">
+            <p>
+              Selecione <strong>"Apenas Áudio (MP3)"</strong> caso deseje economizar espaço em disco e focar exclusivamente nas vozes dos participantes para gerar atas de reunião e requisitos por IA.
+            </p>
+          </div>
         </div>
 
-        {/* Step 3: Offline & Windows Security */}
+        {/* Section 2: Channel Separation & Dual Mix */}
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+            <Mic className="w-3.5 h-3.5" />
+            3. Separação de Canais Estéreo & Identificação de Vozes (Google Meet / Zoom)
+          </h3>
+          <div className="text-xs text-[#C4C7D0] leading-relaxed bg-[#0E1015] p-3.5 rounded-lg border border-[#22252D] space-y-2">
+            <p>
+              Com o modo <strong>"Separação de Canais (L/R)"</strong>, o gravador isola o seu microfone no <strong>Canal Esquerdo (L)</strong> e as vozes remotas da reunião no <strong>Canal Direito (R)</strong>.
+            </p>
+            <p className="text-[11px] text-[#8E929E]">
+              💡 <strong>Como a IA identifica quem falou:</strong> O modelo Gemini analisa os canais estéreo e cruza com a lista de <em>Participantes</em> e as <em>Legendas/CC</em> informadas, garantindo que suas falas nunca se misturem com as falas dos outros participantes na transcrição e na ata!
+            </p>
+          </div>
+        </div>
+
+        {/* Section 3: Offline & Windows Security */}
         <div className="space-y-1.5">
           <h3 className="text-xs font-bold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5" />
-            3. Armazenamento Local Seguro & Suporte Offline
+            4. Armazenamento Local Seguro & Suporte Offline
           </h3>
           <p className="text-xs text-[#C4C7D0] leading-relaxed bg-[#0E1015] p-3 rounded-lg border border-[#22252D]">
-            Todos os áudios codificados em MP3, transcrições e levantamentos de requisitos ficam armazenados na base de dados <strong>IndexedDB local</strong> do seu navegador Windows. Você pode exportar backups em JSON, CSV ou arquivos MP3 a qualquer momento sem depender de nuvens externas.
+            Todos os vídeos de tela gravados, áudios MP3, transcrições e requisitos ficam armazenados na base de dados <strong>IndexedDB local</strong> do seu computador. Você pode exportar o vídeo, baixar o áudio MP3 ou relatórios em Markdown/CSV a qualquer momento.
           </p>
         </div>
 
-        {/* Step 4: Windows Shortcuts */}
+        {/* Section 4: Windows Shortcuts */}
         <div className="space-y-2">
           <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
             <Keyboard className="w-3.5 h-3.5" />
-            4. Atalhos de Teclado no Windows
+            5. Atalhos de Teclado no Windows
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             <div className="p-2.5 rounded-lg bg-[#0E1015] border border-[#22252D] flex items-center justify-between">

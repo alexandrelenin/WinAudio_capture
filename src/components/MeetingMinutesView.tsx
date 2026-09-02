@@ -41,6 +41,8 @@ export const MeetingMinutesView: React.FC<MeetingMinutesViewProps> = ({
   const actionItems: ActionItem[] = a?.actionItems || [];
   const keyPoints = a?.keyPoints || a?.keyDiscussionPoints || [];
   const conciseSummary = a?.conciseSummary || a?.executiveSummary || "";
+  const participants = a?.participants || meeting.participants || [];
+  const speakerStats = a?.speakerStats || [];
 
   // Segments from structured AI analysis or live recording
   const segments: TranscriptSegment[] = useMemo(() => {
@@ -172,6 +174,69 @@ export const MeetingMinutesView: React.FC<MeetingMinutesViewProps> = ({
             {conciseSummary || "Nenhum resumo gerado ainda. Clique em 'Analisar com Gemini IA' acima para obter o resumo conciso e transcrição detalhada."}
           </p>
         </div>
+
+        {/* Speaker Diarization Stats / Roster */}
+        {(participants.length > 0 || speakerStats.length > 0) && (
+          <div className="space-y-2 pt-1 border-t border-[#22252D]/60">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[11px] font-bold text-[#8E929E] uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-emerald-400" />
+                Participantes Identificados & Diarização de Falas
+              </h3>
+              <span className="text-[10px] text-[#6B7280]">Locutores da Reunião</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {speakerStats.length > 0
+                ? speakerStats.map((spk, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-lg bg-[#0E1015] border border-[#22252D] flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 ${
+                            idx === 0
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : idx === 1
+                              ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                              : "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+                          }`}
+                        >
+                          {spk.speaker.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="truncate">
+                          <span className="text-xs font-semibold text-[#EDEDED] block truncate">
+                            {spk.speaker}
+                          </span>
+                          <span className="text-[10px] text-[#8E929E]">
+                            {spk.segmentCount ? `${spk.segmentCount} intervenções` : "Participante"}
+                          </span>
+                        </div>
+                      </div>
+                      {typeof spk.percentage === "number" && (
+                        <div className="text-right shrink-0">
+                          <span className="text-xs font-mono font-bold text-blue-400">
+                            {spk.percentage}%
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                : participants.map((p, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-lg bg-[#0E1015] border border-[#22252D] flex items-center gap-2"
+                    >
+                      <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center font-bold text-[10px] shrink-0">
+                        {p.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="text-xs font-semibold text-[#EDEDED] truncate">{p}</span>
+                    </div>
+                  ))}
+            </div>
+          </div>
+        )}
 
         {/* Key Discussion Points / Pontos Principais & Deliberações */}
         {keyPoints.length > 0 && (
@@ -338,9 +403,21 @@ export const MeetingMinutesView: React.FC<MeetingMinutesViewProps> = ({
 
                 <div className="space-y-0.5 flex-1 min-w-0">
                   {seg.speaker && (
-                    <span className="text-[10px] font-semibold text-[#8E929E] block">
-                      {seg.speaker}:
-                    </span>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span className="text-[11px] font-bold text-blue-400">
+                        {seg.speaker}
+                      </span>
+                      {seg.channel === "left" && (
+                        <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          🎙️ Microfone
+                        </span>
+                      )}
+                      {seg.channel === "right" && (
+                        <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                          🖥️ Google Meet
+                        </span>
+                      )}
+                    </div>
                   )}
                   <p className="text-xs text-[#C4C7D0] leading-relaxed group-hover:text-white transition">
                     {renderHighlightedText(seg.text, transcriptSearch)}

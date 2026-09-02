@@ -20,6 +20,11 @@ import {
   Zap,
   Settings,
   Layers,
+  Users,
+  Film,
+  Video,
+  Maximize2,
+  ExternalLink,
 } from "lucide-react";
 import { AudioCaptureEngine } from "../utils/audioRecorder";
 import {
@@ -29,6 +34,8 @@ import {
   TranscriptSegment,
   MeetingTemplateType,
   AISettings,
+  RecordMediaType,
+  VideoResolution,
 } from "../types";
 import { formatTime, formatBytes } from "../utils/audioEncoder";
 import { saveMeetingToDB } from "../utils/db";
@@ -59,11 +66,30 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   recordingTime,
   setRecordingTime,
 }) => {
-  const [sourceType, setSourceType] = useState<AudioSourceType>("dual_mix");
+  // Check if getDisplayMedia is supported in the current context
+  const isDisplayMediaSupported =
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices !== "undefined" &&
+    typeof navigator.mediaDevices.getDisplayMedia === "function";
+
+  const isInIframe = typeof window !== "undefined" && window.self !== window.top;
+
+  // Recording mode: Audio only vs Screen Video + Audio
+  const [recordTarget, setRecordTarget] = useState<RecordMediaType>("audio");
+  const [videoResolution, setVideoResolution] = useState<VideoResolution>("1080p");
+  const [videoFps, setVideoFps] = useState<number>(30);
+  const [activeVisualizerTab, setActiveVisualizerTab] = useState<"video" | "spectrum">("video");
+
+  const [sourceType, setSourceType] = useState<AudioSourceType>(
+    isDisplayMediaSupported ? "dual_channels" : "mic"
+  );
   const [selectedTemplate, setSelectedTemplate] = useState<MeetingTemplateType>(
     aiSettings.defaultTemplate || "general"
   );
   const [meetingTitle, setMeetingTitle] = useState<string>("");
+  const [participantsInput, setParticipantsInput] = useState<string>("");
+  const [closedCaptionsContext, setClosedCaptionsContext] = useState<string>("");
+  const [showClosedCaptionsBox, setShowClosedCaptionsBox] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [markers, setMarkers] = useState<AudioMarker[]>([]);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
@@ -86,6 +112,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   const [processingStatusText, setProcessingStatusText] = useState<string>("");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const liveVideoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -121,6 +148,19 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
     };
   }, [isRecording, isPaused, audioEngineRef, setRecordingTime]);
 
+  // Attach live screen video stream to preview element
+  useEffect(() => {
+    if (isRecording && recordTarget === "screen_video" && liveVideoPreviewRef.current && audioEngineRef.current) {
+      const stream = audioEngineRef.current.getVideoStream();
+      if (stream) {
+        liveVideoPreviewRef.current.srcObject = stream;
+        liveVideoPreviewRef.current.play().catch(console.error);
+      }
+    } else if (!isRecording && liveVideoPreviewRef.current) {
+      liveVideoPreviewRef.current.srcObject = null;
+    }
+  }, [isRecording, recordTarget, activeVisualizerTab, audioEngineRef]);
+
   // Audio Visualizer Canvas Loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -150,13 +190,13 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
       ctx.stroke();
 
       if (isRecording && audioEngineRef.current && !isPaused) {
-        const { timeData, freqData, overallLevel } = audioEngineRef.current.getAudioLevels();
+        const { timeData, freqData } = audioEngineRef.current.getAudioLevels();
 
         // 1. Draw Frequency Bars
         const barWidth = (width / freqData.length) * 2.2;
         let x = 0;
         for (let i = 0; i < freqData.length / 2; i++) {
-          const barHeight = (freqData[i] / 255) * (height * 0.45);
+          const barHeight = (freqData[i] / 255) * (height * 0.4);
 
           const barGrad = ctx.createLinearGradient(0, height - barHeight, 0, height);
           barGrad.addColorStop(0, "#38bdf8");
@@ -172,9 +212,9 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         // 2. Draw Oscilloscope Waveform
         ctx.lineWidth = 2.5;
         const waveGrad = ctx.createLinearGradient(0, 0, width, 0);
-        waveGrad.addColorStop(0, "#38bdf8");
-        waveGrad.addColorStop(0.5, "#60a5fa");
-        waveGrad.addColorStop(1, "#a855f7");
+        waveGrad.addColorStop(0, "#10b981");
+        waveGrad.addColorStop(0.5, "#38bdf8");
+        waveGrad.addColorStop(1, "#818cf8");
         ctx.strokeStyle = waveGrad;
         ctx.shadowColor = "#38bdf8";
         ctx.shadowBlur = 8;
@@ -195,35 +235,14 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
           waveX += sliceWidth;
         }
         ctx.stroke();
-        ctx.shadowBlur = 0;
-
-        // Overall level text / meter badge
-        ctx.fillStyle = overallLevel > 70 ? "#ef4444" : "#10b981";
-        ctx.font = "bold 11px Inter, sans-serif";
-        ctx.fillText(`NÍVEL: ${overallLevel}%`, width - 85, 20);
       } else {
-        // Idle placeholder wave
-        ctx.strokeStyle = "rgba(100, 116, 139, 0.4)";
-        ctx.lineWidth = 2;
+        // Idle ambient line
+        ctx.strokeStyle = "rgba(75, 85, 99, 0.4)";
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(0, height / 2);
-        for (let i = 0; i < width; i += 20) {
-          const y = height / 2 + Math.sin(i * 0.05 + Date.now() * 0.002) * 4;
-          ctx.lineTo(i, y);
-        }
+        ctx.lineTo(width, height / 2);
         ctx.stroke();
-
-        ctx.fillStyle = "#64748b";
-        ctx.font = "12px Inter, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(
-          isPaused
-            ? "GRAVAÇÃO EM SEGUNDO PLANO PAUSADA"
-            : "MODO CONTÍNUO: PRONTO PARA GRAVAR SOM DO PC OU MICROFONE",
-          width / 2,
-          height / 2 - 12
-        );
-        ctx.textAlign = "start";
       }
 
       animationFrameRef.current = requestAnimationFrame(render);
@@ -232,46 +251,69 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
     render();
 
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
   }, [isRecording, isPaused, audioEngineRef]);
 
-  // Auto-scroll transcript
+  // Auto-scroll transcript window
   useEffect(() => {
-    if (transcriptEndRef.current) {
-      transcriptEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [liveTranscript, interimText, liveSegments]);
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [liveTranscript, liveSegments, interimText]);
 
-  // Keyboard Shortcuts for Windows (Alt+R to start/stop, Alt+M to mark requirement)
+  // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input or textarea
+      if (
+        document.activeElement?.tagName === "INPUT" ||
+        document.activeElement?.tagName === "TEXTAREA"
+      ) {
+        return;
+      }
+
+      // Alt + R -> Start / Stop
       if (e.altKey && (e.key === "r" || e.key === "R")) {
         e.preventDefault();
-        if (isRecording) {
-          handleStopRecording();
-        } else {
+        if (!isRecording) {
           handleStartRecording();
+        } else {
+          handleStopRecording();
         }
-      } else if (e.altKey && (e.key === "m" || e.key === "M")) {
+      }
+
+      // Alt + P -> Pause / Resume
+      if (e.altKey && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
         if (isRecording) {
-          handleAddQuickMarker("Ponto-Chave (Alt+M)", "requisito");
+          handlePauseToggle();
+        }
+      }
+
+      // Alt + M -> Add quick marker
+      if (e.altKey && (e.key === "m" || e.key === "M")) {
+        e.preventDefault();
+        if (isRecording) {
+          handleAddQuickMarker("Ponto-chave importante");
         }
       }
     };
+
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isRecording, meetingTitle, sourceType, autoAiTranscribe]);
+  }, [isRecording, meetingTitle, sourceType, recordTarget, autoAiTranscribe]);
 
-  const handleStartRecording = async () => {
+  const handleStartRecordingWith = async (sourceOverride?: AudioSourceType, targetOverride?: RecordMediaType) => {
+    const src = sourceOverride || sourceType;
+    const tgt = targetOverride || recordTarget;
+    if (sourceOverride) setSourceType(sourceOverride);
+    if (targetOverride) setRecordTarget(targetOverride);
+
     setErrorMessage(null);
     try {
       if (!meetingTitle.trim()) {
         const tmplObj = MEETING_TEMPLATES.find((t) => t.id === selectedTemplate);
-        const defaultTitle = `${tmplObj?.label || "Reunião"} - ${new Date().toLocaleDateString("pt-BR")} (${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`;
+        const typeLabel = tgt === "screen_video" ? "Gravação de Tela" : "Reunião";
+        const defaultTitle = `${tmplObj?.label || typeLabel} - ${new Date().toLocaleDateString("pt-BR")} (${new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`;
         setMeetingTitle(defaultTitle);
       }
 
@@ -282,8 +324,15 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
       audioEngineRef.current.setSystemVolume(systemVol);
       audioEngineRef.current.setMicVolume(micVol);
 
+      const participantsList = participantsInput
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+      const hostLabel = participantsList.length > 0 ? participantsList[0] : "Você (Microfone)";
+
       await audioEngineRef.current.startRecording(
-        sourceType,
+        src,
         enableLiveBrowserSpeech
           ? (chunk, isFinal, seg) => {
               if (isFinal) {
@@ -296,7 +345,10 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 setInterimText(chunk);
               }
             }
-          : undefined
+          : undefined,
+        hostLabel,
+        tgt,
+        { resolution: videoResolution, fps: videoFps }
       );
 
       setIsRecording(true);
@@ -305,11 +357,16 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
       setLiveTranscript("");
       setLiveSegments([]);
       setInterimText("");
+      if (tgt === "screen_video") {
+        setActiveVisualizerTab("video");
+      }
     } catch (err: any) {
       console.error("Erro ao iniciar gravação:", err);
-      setErrorMessage(err.message || "Não foi possível iniciar a captura de áudio.");
+      setErrorMessage(err.message || "Não foi possível iniciar a captura de áudio/tela.");
     }
   };
+
+  const handleStartRecording = () => handleStartRecordingWith();
 
   const handlePauseToggle = () => {
     if (!audioEngineRef.current) return;
@@ -336,7 +393,11 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
   const handleStopRecording = async () => {
     if (!audioEngineRef.current) return;
     setIsProcessingMp3(true);
-    setProcessingStatusText("Codificando áudio diretamente em formato MP3 (192kbps)...");
+    setProcessingStatusText(
+      recordTarget === "screen_video"
+        ? "Processando vídeo da tela e codificando áudio MP3 (192kbps)..."
+        : "Codificando áudio diretamente em formato MP3 (192kbps)..."
+    );
     setErrorMessage(null);
 
     try {
@@ -364,10 +425,15 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         result.markers
       );
 
+      const participantsList = participantsInput
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean);
+
       // Trigger automatic AI transcription & summarization according to template if enabled
       if (autoAiTranscribe) {
         const provName = aiSettings.provider.replace("_", " ").toUpperCase();
-        setProcessingStatusText(`Processando com IA (${provName} • ${aiSettings.model}): Transcrição & Ata...`);
+        setProcessingStatusText(`Processando com IA (${provName} • ${aiSettings.model}): Transcrição com Diarização & Ata...`);
         try {
           // Convert audio blob to base64 if audio exists (< 30MB)
           let audioBase64: string | undefined;
@@ -393,7 +459,10 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               audioBase64,
               mimeType,
               transcript: finalTranscript,
+              participants: participantsList,
+              sourceType,
               offlineNotes,
+              closedCaptionsContext: closedCaptionsContext.trim() || undefined,
               tags,
               duration: formatTime(result.duration),
               template: selectedTemplate,
@@ -416,6 +485,8 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               ...initialAnalysis,
               mode: "ai",
               template: selectedTemplate,
+              participants: aiData.participants || participantsList,
+              speakerStats: aiData.speakerStats,
               executiveSummary: aiData.executiveSummary || aiData.conciseSummary || initialAnalysis.executiveSummary,
               conciseSummary: aiData.conciseSummary || aiData.executiveSummary || initialAnalysis.conciseSummary,
               formalMinutes: aiData.formalMinutes,
@@ -438,6 +509,8 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         }
       }
 
+      const isVideoRec = result.mediaType === "video" && Boolean(result.videoBlob);
+
       const record: MeetingRecord = {
         id: `meet-${Date.now()}`,
         title,
@@ -445,12 +518,20 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
         duration: result.duration,
         durationFormatted: formatTime(result.duration),
         sourceType,
+        mediaType: isVideoRec ? "video" : "audio",
         audioBlob: result.mp3Blob,
-        format: "mp3",
-        fileSizeFormatted: formatBytes(result.mp3Blob.size),
+        videoBlob: result.videoBlob,
+        videoResolution: result.videoResolution,
+        videoFps: result.videoFps,
+        format: isVideoRec ? "webm" : "mp3",
+        fileSizeFormatted: isVideoRec && result.videoBlob
+          ? formatBytes(result.videoBlob.size)
+          : formatBytes(result.mp3Blob.size),
         transcript: finalTranscript,
         transcriptSegments: finalSegments,
+        participants: participantsList.length > 0 ? participantsList : undefined,
         offlineNotes,
+        closedCaptionsContext: closedCaptionsContext.trim() || undefined,
         markers: result.markers,
         tags,
         template: selectedTemplate,
@@ -473,7 +554,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
       setLiveTranscript("");
       setLiveSegments([]);
     } catch (err: any) {
-      console.error("Erro ao salvar áudio MP3:", err);
+      console.error("Erro ao salvar gravação:", err);
       setErrorMessage(err.message || "Erro ao processar e salvar a gravação.");
     } finally {
       setIsProcessingMp3(false);
@@ -492,7 +573,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">
                 <Radio className="w-3 h-3 text-blue-400 animate-pulse" />
-                Windows Audio Engine
+                Gravador de Tela & Áudio HD
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                 <ShieldCheck className="w-3 h-3" />
@@ -504,14 +585,26 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               </span>
             </div>
             <h2 className="text-base font-bold text-white tracking-tight">
-              Gravador de Áudio & Assistente de Reuniões Multitemplate
+              Gravador de Tela & Reuniões com Atas e Requisitos por IA
             </h2>
             <p className="text-xs text-[#9CA3AF] mt-0.5 max-w-2xl">
-              Grave o som contínuo do PC (Zoom, Teams, Meet, Discord, YouTube) em segundo plano, gere transcrições e atas executivas adaptadas ao objetivo da sua reunião.
+              Grave apresentações, slides, chamadas do Google Meet, Zoom, Teams ou o som do PC. Obtenha vídeo da tela, MP3, transcrições e atas executivas estruturadas.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
+            {isInIframe && (
+              <a
+                href={typeof window !== "undefined" ? window.location.href : "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="Abre o app em uma aba dedicada para suporte completo a gravação de tela e áudio do PC"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                <span>Abrir em Nova Aba</span>
+              </a>
+            )}
             <button
               onClick={onOpenAISettings}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#1C1F26] hover:bg-[#252830] text-[#C4C7D0] hover:text-white border border-[#2A2D35] transition flex items-center gap-1.5 cursor-pointer"
@@ -524,98 +617,442 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#1C1F26] hover:bg-[#252830] text-[#C4C7D0] hover:text-white border border-[#2A2D35] transition flex items-center gap-1.5 cursor-pointer"
             >
               <Info className="w-3.5 h-3.5 text-blue-400" />
-              <span>Dicas de Áudio PC</span>
+              <span>Dicas de Captura</span>
             </button>
           </div>
         </div>
       </div>
 
       {errorMessage && (
-        <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2.5">
-          <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-          <div className="space-y-0.5">
-            <p className="font-medium">{errorMessage}</p>
-            <p className="text-[#8E929E] text-[11px]">
-              Dica: Ao capturar o áudio do PC, selecione "Tela inteira" ou "Aba" e certifique-se de marcar a caixa "Compartilhar áudio do sistema".
-            </p>
+        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-semibold text-red-200">{errorMessage}</p>
+              <p className="text-[#8E929E] text-[11px]">
+                {isInIframe
+                  ? "Dica: Em visualizadores embutidos (iFrame), use 'Apenas Microfone' ou abra em nova aba para capturar tela e áudio interno do Windows."
+                  : "Dica: Ao selecionar Gravar Tela ou Áudio do PC, uma janela do navegador abrirá: selecione a Tela ou Guia e clique no botão azul 'Compartilhar'."}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+            {isInIframe && (
+              <a
+                href={typeof window !== "undefined" ? window.location.href : "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Abrir em Nova Aba</span>
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setRecordTarget("audio");
+                setSourceType("mic");
+                setErrorMessage(null);
+                setTimeout(() => handleStartRecordingWith("mic", "audio"), 50);
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <Mic className="w-3.5 h-3.5" />
+              <span>Gravar com Apenas Microfone</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setErrorMessage(null);
+                handleStartRecording();
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#1C1F26] hover:bg-[#2A2D35] text-[#EDEDED] border border-[#2A2D35] transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <span>Tentar Novamente</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="px-2.5 py-1.5 rounded-lg text-xs text-[#9CA3AF] hover:text-white bg-[#1C1F26] border border-[#2A2D35] cursor-pointer"
+            >
+              Fechar
+            </button>
           </div>
         </div>
       )}
 
-      {/* Main Recording Workspace */}
+      {/* TOP ROW: Monitor de Gravação & Transcrição Contínua ao Vivo */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: Controls, Template Selector & Visualizer (7 cols) */}
-        <div className="lg:col-span-7 space-y-4">
-          {/* 1. Template Selector Card */}
-          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-blue-400" />
-                Template & Objetivo da Reunião
-              </label>
-              <span className="text-[11px] text-[#6B7280]">Adapta o resumo da IA</span>
+        {/* TOP LEFT (lg:col-span-6): Card do Monitor de Gravação (Inicia e Para a Gravação) */}
+        <div className="lg:col-span-6 space-y-4">
+          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3.5">
+            {/* Monitor Header & Status */}
+            <div className="flex items-center justify-between border-b border-[#22252D] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-blue-500/15 text-blue-400">
+                  {recordTarget === "screen_video" ? <Video className="w-4 h-4 text-emerald-400" /> : <Mic className="w-4 h-4 text-blue-400" />}
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-[#EDEDED] uppercase tracking-wider block">
+                    {recordTarget === "screen_video" ? "Monitor de Gravação de Tela & Áudio" : "Monitor de Gravação de Áudio"}
+                  </span>
+                  <span className="text-[10px] text-[#8E929E]">
+                    {recordTarget === "screen_video" ? "Captura tela cheia / guia + áudio estereofônico" : "Codificação direta em MP3 192kbps"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {isRecording ? (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/15 text-[11px] text-red-400 font-mono font-bold border border-red-500/30">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                    REC {recordingTime}
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-[11px] font-mono text-[#8E929E] bg-[#1C1F26] border border-[#2A2D35]">
+                    {recordingTime}
+                  </span>
+                )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {MEETING_TEMPLATES.map((tmpl) => {
-                const isSelected = selectedTemplate === tmpl.id;
-                return (
+            {/* Modalidade de Gravação (Áudio MP3 vs Tela HD + Áudio) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5 text-blue-400" />
+                  Modalidade de Captura
+                </label>
+                <span className="text-[10px] text-[#6B7280]">
+                  {recordTarget === "screen_video" ? "Gera Vídeo HD + Áudio MP3" : "Gera Arquivo MP3 Leve"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {/* Option A: Pure Audio (MP3) */}
+                <button
+                  type="button"
+                  disabled={isRecording}
+                  onClick={() => setRecordTarget("audio")}
+                  className={`p-2.5 rounded-lg text-left border transition-all flex flex-col justify-between gap-1 ${
+                    recordTarget === "audio"
+                      ? "bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40"
+                      : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
+                  } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Mic className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="text-xs font-bold text-[#EDEDED]">Apenas Áudio</span>
+                    </div>
+                    {recordTarget === "audio" && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
+                  </div>
+                  <div className="text-[10px] text-[#8E929E]">MP3 192kbps • Leve para voz e atas</div>
+                </button>
+
+                {/* Option B: Screen Video + Audio */}
+                <button
+                  type="button"
+                  disabled={isRecording}
+                  onClick={() => setRecordTarget("screen_video")}
+                  className={`p-2.5 rounded-lg text-left border transition-all flex flex-col justify-between gap-1 ${
+                    recordTarget === "screen_video"
+                      ? "bg-emerald-600/20 border-emerald-500 text-white shadow-sm ring-1 ring-emerald-500/40"
+                      : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
+                  } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Film className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-xs font-bold text-[#EDEDED]">Gravar Tela + Áudio</span>
+                    </div>
+                    {recordTarget === "screen_video" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                  </div>
+                  <div className="text-[10px] text-[#8E929E]">Vídeo HD (WebM/MP4) + MP3</div>
+                </button>
+              </div>
+
+              {/* If Screen Video selected, show resolution and FPS options */}
+              {recordTarget === "screen_video" && (
+                <div className="pt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label className="block text-[10px] text-[#8E929E] font-semibold mb-1">Resolução do Vídeo:</label>
+                    <select
+                      value={videoResolution}
+                      onChange={(e) => setVideoResolution(e.target.value as VideoResolution)}
+                      disabled={isRecording}
+                      className="w-full bg-[#0E1015] border border-[#2A2D35] rounded-lg px-2.5 py-1 text-xs text-[#EDEDED] focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="1080p">1080p (Full HD - Nítido para texto)</option>
+                      <option value="720p">720p (HD - Mais leve e fluido)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] text-[#8E929E] font-semibold mb-1">Taxa de Quadros (FPS):</label>
+                    <select
+                      value={videoFps}
+                      onChange={(e) => setVideoFps(parseInt(e.target.value))}
+                      disabled={isRecording}
+                      className="w-full bg-[#0E1015] border border-[#2A2D35] rounded-lg px-2.5 py-1 text-xs text-[#EDEDED] focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value="30">30 FPS (Recomendado para reuniões)</option>
+                      <option value="60">60 FPS (Ultra suave)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Visualizer Tabs when Screen recording */}
+            {recordTarget === "screen_video" && isRecording && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setActiveVisualizerTab("video")}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+                    activeVisualizerTab === "video"
+                      ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                      : "bg-[#1C1F26] text-[#8E929E] hover:text-white"
+                  }`}
+                >
+                  <Film className="w-3 h-3 text-emerald-400" />
+                  <span>Monitor da Tela Gravada</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveVisualizerTab("spectrum")}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 cursor-pointer transition ${
+                    activeVisualizerTab === "spectrum"
+                      ? "bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                      : "bg-[#1C1F26] text-[#8E929E] hover:text-white"
+                  }`}
+                >
+                  <Sliders className="w-3 h-3 text-blue-400" />
+                  <span>Espectro de Frequências</span>
+                </button>
+              </div>
+            )}
+
+            {/* Live Video Monitor or Audio Oscilloscope */}
+            {recordTarget === "screen_video" && isRecording && activeVisualizerTab === "video" ? (
+              <div className="relative rounded-lg overflow-hidden border border-[#22252D] bg-black aspect-video flex items-center justify-center max-h-48">
+                <video
+                  ref={liveVideoPreviewRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  TELA CAPTURADA • {videoResolution} • {videoFps}fps
+                </div>
+              </div>
+            ) : (
+              <div className="relative rounded-lg overflow-hidden border border-[#22252D]">
+                <canvas ref={canvasRef} width={640} height={130} className="w-full h-28 block bg-[#0A0B0D]" />
+              </div>
+            )}
+
+            {/* Main Action Bar (Iniciar, Pausar, Parar Gravação) */}
+            <div className="pt-1">
+              {!isRecording ? (
+                <button
+                  type="button"
+                  onClick={handleStartRecording}
+                  disabled={isProcessingMp3}
+                  className={`w-full flex items-center justify-center gap-2 px-5 py-3 rounded-lg text-xs font-bold text-white shadow-md transition-all transform active:scale-98 cursor-pointer ${
+                    recordTarget === "screen_video"
+                      ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30"
+                      : "bg-blue-600 hover:bg-blue-500 shadow-blue-600/30"
+                  }`}
+                >
+                  {recordTarget === "screen_video" ? (
+                    <>
+                      <Video className="w-4 h-4 text-white shrink-0" />
+                      <span>Iniciar Gravação de Tela + Áudio (Alt + R)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-4 h-4 text-white shrink-0" />
+                      <span>Iniciar Gravação Contínua de Áudio (Alt + R)</span>
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
                   <button
-                    key={tmpl.id}
                     type="button"
-                    disabled={isRecording}
-                    onClick={() => setSelectedTemplate(tmpl.id)}
-                    className={`p-2.5 rounded-lg text-left border transition-all flex flex-col justify-between gap-1.5 ${
-                      isSelected
-                        ? "bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40"
-                        : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
-                    } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                    onClick={handlePauseToggle}
+                    className={`px-4 py-2.5 rounded-lg text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
+                      isPaused
+                        ? "bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
+                        : "bg-[#1C1F26] border-[#2A2D35] text-[#EDEDED] hover:bg-[#242830]"
+                    }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="text-base">{tmpl.icon}</span>
-                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-[#EDEDED] truncate">{tmpl.shortLabel}</div>
-                      <div className="text-[10px] text-[#8E929E] line-clamp-1">{tmpl.description}</div>
-                    </div>
+                    {isPaused ? <Play className="w-3.5 h-3.5 fill-amber-300" /> : <Pause className="w-3.5 h-3.5" />}
+                    <span>{isPaused ? "Retomar" : "Pausar"}</span>
                   </button>
-                );
-              })}
+
+                  <button
+                    type="button"
+                    onClick={handleStopRecording}
+                    disabled={isProcessingMp3}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/30 transition transform active:scale-98 cursor-pointer"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-white" />
+                    <span>
+                      {recordTarget === "screen_video"
+                        ? "Concluir Gravação & Gerar Vídeo + MP3"
+                        : "Concluir Gravação & Gerar MP3"}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {isProcessingMp3 && (
+              <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center justify-center gap-2.5 animate-pulse">
+                <Sparkles className="w-4 h-4 text-blue-400 animate-spin" />
+                <span className="font-semibold">{processingStatusText || "Processando áudio e IA..."}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* TOP RIGHT (lg:col-span-6): Card da Transcrição Contínua ao Vivo */}
+        <div className="lg:col-span-6 space-y-4">
+          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-2.5 flex flex-col h-full min-h-[380px]">
+            <div className="flex items-center justify-between border-b border-[#22252D] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-blue-500/15 text-blue-400">
+                  <FileText className="w-4 h-4 text-blue-400" />
+                </div>
+                <div>
+                  <span className="text-xs font-bold text-[#EDEDED] uppercase tracking-wider block">
+                    Transcrição Contínua ao Vivo
+                  </span>
+                  <span className="text-[10px] text-[#8E929E]">
+                    {enableLiveBrowserSpeech ? "Web Speech nativo (0 tokens de IA)" : "Modo gravação pura em segundo plano"}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] text-[#6B7280] font-mono px-2 py-0.5 rounded bg-[#1C1F26] border border-[#2A2D35]">
+                {enableLiveBrowserSpeech
+                  ? `${liveTranscript.split(/\s+/).filter(Boolean).length} palavras`
+                  : "Desativado"}
+              </span>
+            </div>
+
+            <div className="flex-1 bg-[#0A0B0D] border border-[#22252D] rounded-lg p-3 overflow-y-auto text-xs leading-relaxed text-[#C4C7D0] font-sans space-y-2 max-h-[310px]">
+              {!enableLiveBrowserSpeech ? (
+                <div className="text-center pt-16 pb-8 space-y-2">
+                  <div className="w-9 h-9 mx-auto rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                    <HardDrive className="w-4 h-4" />
+                  </div>
+                  <p className="text-xs text-[#EDEDED] font-semibold">
+                    Transcrição ao Vivo desativada
+                  </p>
+                  <p className="text-[11px] text-[#8E929E] max-w-xs mx-auto">
+                    A gravação está sendo realizada em segundo plano com fidelidade cristalina. A transcrição completa e a ata executiva serão geradas pelo modelo de IA ({aiSettings.model}) quando você clicar em concluir.
+                  </p>
+                </div>
+              ) : liveTranscript ? (
+                <div className="space-y-1.5">
+                  {liveSegments.map((s) => (
+                    <div key={s.id} className="flex items-start gap-1.5">
+                      <span className="font-mono text-[10px] text-blue-400 font-bold shrink-0">
+                        [{s.timeFormatted}]
+                      </span>
+                      <p className="text-xs text-[#EDEDED]">{s.text}</p>
+                    </div>
+                  ))}
+                  {!liveSegments.length && <p className="whitespace-pre-wrap">{liveTranscript}</p>}
+                </div>
+              ) : (
+                <p className="text-[#6B7280] italic text-center pt-20 text-xs">
+                  {isRecording
+                    ? "Gravando em segundo plano... Fale ou reproduza som no Windows para ver a transcrição em tempo real."
+                    : "A transcrição em tempo real contínua será exibida aqui durante a gravação."}
+                </p>
+              )}
+
+              {interimText && enableLiveBrowserSpeech && (
+                <span className="text-blue-400 italic bg-blue-500/10 px-1 rounded animate-pulse">
+                  {interimText}
+                </span>
+              )}
+              <div ref={transcriptEndRef} />
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* 2. Source Selection Card */}
+      {/* BOTTOM ROW: Configurações de Áudio/Reunião & Marcação Rápida (Abaixo da Transcrição) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* BOTTOM LEFT (lg:col-span-6): Fontes de Áudio, Volumes, Título & Template */}
+        <div className="lg:col-span-6 space-y-4">
+          {/* Audio Source Selection Card */}
           <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-blue-400" />
-                Fonte de Áudio do Windows
+                Fontes de Áudio & Microfone
               </label>
-              <span className="text-[11px] text-[#6B7280] font-mono">MP3 • 192kbps • Contínuo</span>
+              <span className="text-[11px] text-[#6B7280] font-mono">Diarização Estéreo L / R</span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* Dual Channels (Stereo Separation: Left=Mic, Right=Meet) */}
+              <button
+                type="button"
+                disabled={isRecording}
+                onClick={() => setSourceType("dual_channels")}
+                className={`p-3 rounded-lg text-left border transition-all flex flex-col justify-between gap-1.5 ${
+                  sourceType === "dual_channels"
+                    ? "bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40"
+                    : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
+                } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <div className="p-1 rounded bg-blue-500/20 text-blue-400">
+                      <Sliders className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      Diarização 100%
+                    </span>
+                  </div>
+                  {sourceType === "dual_channels" && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-[#EDEDED]">Separação de Canais (L / R)</div>
+                  <div className="text-[10px] text-[#8E929E]">Canal E = Seu Microfone • Canal D = Google Meet</div>
+                </div>
+              </button>
+
               {/* Dual Mix */}
               <button
                 type="button"
                 disabled={isRecording}
                 onClick={() => setSourceType("dual_mix")}
-                className={`p-2.5 rounded-lg text-left border transition-all flex flex-col justify-between gap-1.5 ${
+                className={`p-3 rounded-lg text-left border transition-all flex flex-col justify-between gap-1.5 ${
                   sourceType === "dual_mix"
                     ? "bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40"
                     : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
                 } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
               >
                 <div className="flex items-center justify-between">
-                  <div className="p-1 rounded bg-blue-500/20 text-blue-400">
+                  <div className="p-1 rounded bg-indigo-500/20 text-indigo-400">
                     <Sliders className="w-3.5 h-3.5" />
                   </div>
                   {sourceType === "dual_mix" && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-[#EDEDED]">Mixagem Dupla</div>
-                  <div className="text-[10px] text-[#8E929E]">PC + Microfone (Ideal)</div>
+                  <div className="text-xs font-bold text-[#EDEDED]">Mixagem Combinada</div>
+                  <div className="text-[10px] text-[#8E929E]">PC + Microfone mesclados juntos</div>
                 </div>
               </button>
 
@@ -637,8 +1074,8 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                   {sourceType === "system" && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-[#EDEDED]">Áudio do PC</div>
-                  <div className="text-[10px] text-[#8E929E]">Zoom, Teams, Apps</div>
+                  <div className="text-xs font-bold text-[#EDEDED]">Apenas Áudio do PC</div>
+                  <div className="text-[10px] text-[#8E929E]">Zoom, Teams, Meet</div>
                 </div>
               </button>
 
@@ -660,19 +1097,19 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                   {sourceType === "mic" && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-[#EDEDED]">Microfone</div>
-                  <div className="text-[10px] text-[#8E929E]">Voz presencial</div>
+                  <div className="text-xs font-bold text-[#EDEDED]">Apenas Microfone</div>
+                  <div className="text-[10px] text-[#8E929E]">Voz presencial direta</div>
                 </div>
               </button>
             </div>
 
-            {/* Mixer volume sliders for dual_mix */}
-            {sourceType === "dual_mix" && (
+            {/* Mixer volume sliders */}
+            {(sourceType === "dual_channels" || sourceType === "dual_mix") && (
               <div className="pt-2 border-t border-[#22252D] grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <div className="flex justify-between text-[11px] text-[#8E929E]">
                     <span className="flex items-center gap-1">
-                      <Monitor className="w-3 h-3 text-indigo-400" /> Volume Áudio PC
+                      <Monitor className="w-3 h-3 text-indigo-400" /> Volume Áudio PC / Meet
                     </span>
                     <span className="font-mono">{Math.round(systemVol * 100)}%</span>
                   </div>
@@ -694,7 +1131,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 <div className="space-y-1">
                   <div className="flex justify-between text-[11px] text-[#8E929E]">
                     <span className="flex items-center gap-1">
-                      <Mic className="w-3 h-3 text-emerald-400" /> Volume Microfone
+                      <Mic className="w-3 h-3 text-emerald-400" /> Volume Microfone Local
                     </span>
                     <span className="font-mono">{Math.round(micVol * 100)}%</span>
                   </div>
@@ -715,19 +1152,102 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               </div>
             )}
 
-            {/* Meeting Title Input */}
+            {/* Meeting Title & Participants Input */}
+            <div className="pt-1 space-y-2.5">
+              <div>
+                <label className="block text-[11px] font-semibold text-[#C4C7D0] mb-1">
+                  Título ou Assunto da Reunião
+                </label>
+                <input
+                  type="text"
+                  value={meetingTitle}
+                  onChange={(e) => setMeetingTitle(e.target.value)}
+                  placeholder={`Ex: ${currentTmpl?.label} - Alinhamento de Produto`}
+                  disabled={isRecording}
+                  className="w-full bg-[#0E1015] border border-[#22252D] focus:border-blue-500 rounded-lg px-3 py-1.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none disabled:opacity-60"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-semibold text-[#C4C7D0] flex items-center gap-1">
+                    <Users className="w-3 h-3 text-blue-400" />
+                    Participantes da Reunião (Identificação / Roster)
+                  </label>
+                  <span className="text-[10px] text-emerald-400 font-medium">Melhora a Diarização da IA</span>
+                </div>
+                <input
+                  type="text"
+                  value={participantsInput}
+                  onChange={(e) => setParticipantsInput(e.target.value)}
+                  placeholder="Ex: Alexandre (Apresentador), Beatriz (Tech Lead), Carlos (PO)"
+                  disabled={isRecording}
+                  className="w-full bg-[#0E1015] border border-[#22252D] focus:border-blue-500 rounded-lg px-3 py-1.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none disabled:opacity-60"
+                />
+              </div>
+            </div>
+
+            {/* Template Selector Card */}
+            <div className="pt-1 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-blue-400" />
+                  Template & Objetivo da Reunião
+                </label>
+                <span className="text-[11px] text-[#6B7280]">Adapta o resumo da IA</span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {MEETING_TEMPLATES.map((tmpl) => {
+                  const isSelected = selectedTemplate === tmpl.id;
+                  return (
+                    <button
+                      key={tmpl.id}
+                      type="button"
+                      disabled={isRecording}
+                      onClick={() => setSelectedTemplate(tmpl.id)}
+                      className={`p-2.5 rounded-lg text-left border transition-all flex flex-col justify-between gap-1.5 ${
+                        isSelected
+                          ? "bg-blue-600/20 border-blue-500 text-white shadow-sm ring-1 ring-blue-500/40"
+                          : "bg-[#1C1F26] border-[#2A2D35] text-[#9CA3AF] hover:text-white hover:bg-[#232730]"
+                      } ${isRecording ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-base">{tmpl.icon}</span>
+                        {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-[#EDEDED] truncate">{tmpl.shortLabel}</div>
+                        <div className="text-[10px] text-[#8E929E] line-clamp-1">{tmpl.description}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Collapsible: Google Meet Closed Captions / Subtitles Context */}
             <div className="pt-1">
-              <label className="block text-[11px] font-semibold text-[#C4C7D0] mb-1">
-                Título ou Assunto da Reunião
-              </label>
-              <input
-                type="text"
-                value={meetingTitle}
-                onChange={(e) => setMeetingTitle(e.target.value)}
-                placeholder={`Ex: ${currentTmpl?.label} - Alinhamento Semanal`}
-                disabled={isRecording}
-                className="w-full bg-[#0E1015] border border-[#22252D] focus:border-blue-500 rounded-lg px-3 py-1.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none disabled:opacity-60"
-              />
+              <button
+                type="button"
+                onClick={() => setShowClosedCaptionsBox(!showClosedCaptionsBox)}
+                className="text-[11px] text-[#9CA3AF] hover:text-[#EDEDED] flex items-center gap-1 font-medium transition cursor-pointer"
+              >
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                <span>{showClosedCaptionsBox ? "Ocultar Legendas do Meet / CC" : "+ Inserir Legendas do Google Meet / Closed Captions (Opcional)"}</span>
+              </button>
+
+              {showClosedCaptionsBox && (
+                <div className="mt-2 space-y-1">
+                  <textarea
+                    value={closedCaptionsContext}
+                    onChange={(e) => setClosedCaptionsContext(e.target.value)}
+                    placeholder="Cole aqui transcrições geradas pelas legendas do Google Meet, Zoom ou extensões para calibrar a precisão dos nomes e termos técnicos..."
+                    rows={3}
+                    className="w-full bg-[#0E1015] border border-[#22252D] rounded-lg p-2.5 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none focus:border-blue-500 resize-none font-mono text-[11px]"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Toggles: Auto AI Summarization & Live Browser Speech */}
@@ -743,7 +1263,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                   />
                   <span className="text-xs text-[#C4C7D0] font-semibold flex items-center gap-1">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    Processar com IA ({aiSettings.model}) ao concluir
+                    Processar com IA ({aiSettings.model}) ao concluir com Diarização
                   </span>
                 </label>
               </div>
@@ -765,79 +1285,11 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               </div>
             </div>
           </div>
+        </div>
 
-          {/* 3. Audio Visualizer Stage */}
-          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider">
-                  Osciloscópio & Espectro de Áudio
-                </span>
-                {isRecording && (
-                  <span className="flex items-center gap-1 text-[10px] text-red-400 font-mono">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
-                    GRAVANDO EM SEGUNDO PLANO
-                  </span>
-                )}
-              </div>
-              <div className="font-mono text-base font-bold text-white tracking-wider">
-                {recordingTime}
-              </div>
-            </div>
-
-            <div className="relative rounded-lg overflow-hidden border border-[#22252D]">
-              <canvas ref={canvasRef} width={640} height={140} className="w-full h-32 block bg-[#0A0B0D]" />
-            </div>
-
-            {/* Main Action Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
-              {!isRecording ? (
-                <button
-                  type="button"
-                  onClick={handleStartRecording}
-                  disabled={isProcessingMp3}
-                  className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/30 transition-all transform active:scale-98 cursor-pointer"
-                >
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>Iniciar Gravação Contínua (Alt + R)</span>
-                </button>
-              ) : (
-                <div className="flex flex-1 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePauseToggle}
-                    className={`px-3.5 py-2.5 rounded-lg text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
-                      isPaused
-                        ? "bg-amber-500/20 border-amber-500/40 text-amber-300 hover:bg-amber-500/30"
-                        : "bg-[#1C1F26] border-[#2A2D35] text-[#EDEDED] hover:bg-[#242830]"
-                    }`}
-                  >
-                    {isPaused ? <Play className="w-3.5 h-3.5 fill-amber-300" /> : <Pause className="w-3.5 h-3.5" />}
-                    <span>{isPaused ? "Retomar" : "Pausar"}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleStopRecording}
-                    disabled={isProcessingMp3}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/30 transition transform active:scale-98 cursor-pointer"
-                  >
-                    <Square className="w-3.5 h-3.5 fill-white" />
-                    <span>Concluir Gravação & Gerar MP3</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {isProcessingMp3 && (
-              <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center justify-center gap-2.5 animate-pulse">
-                <Sparkles className="w-4 h-4 text-blue-400 animate-spin" />
-                <span className="font-semibold">{processingStatusText || "Processando áudio e IA..."}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Quick Marker Timestamp Bar */}
+        {/* BOTTOM RIGHT (lg:col-span-6): Card Marcação Rápida de Momentos-Chave (Abaixo da Transcrição) + Anotações */}
+        <div className="lg:col-span-6 space-y-4">
+          {/* Card Marcação Rápida de Momentos-Chave */}
           <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider flex items-center gap-1.5">
@@ -930,67 +1382,6 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
               </div>
             )}
           </div>
-        </div>
-
-        {/* Right: Live Transcription Stream & Notepad (5 cols) */}
-        <div className="lg:col-span-5 space-y-4">
-          {/* Live Transcript Stream */}
-          <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-2.5 flex flex-col h-[340px]">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="w-3.5 h-3.5 text-blue-400" />
-                <span className="text-[11px] font-bold text-[#C4C7D0] uppercase tracking-wider">
-                  Transcrição Contínua ao Vivo
-                </span>
-              </div>
-              <span className="text-[10px] text-[#6B7280] font-mono">
-                {enableLiveBrowserSpeech
-                  ? `${liveTranscript.split(/\s+/).filter(Boolean).length} palavras`
-                  : "Desativado (Economia de CPU)"}
-              </span>
-            </div>
-
-            <div className="flex-1 bg-[#0A0B0D] border border-[#22252D] rounded-lg p-3 overflow-y-auto text-xs leading-relaxed text-[#C4C7D0] font-sans space-y-2">
-              {!enableLiveBrowserSpeech ? (
-                <div className="text-center pt-20 space-y-2">
-                  <div className="w-9 h-9 mx-auto rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                    <HardDrive className="w-4 h-4" />
-                  </div>
-                  <p className="text-xs text-[#EDEDED] font-semibold">
-                    Transcrição ao Vivo desativada
-                  </p>
-                  <p className="text-[11px] text-[#8E929E] max-w-xs mx-auto">
-                    O áudio MP3 cristalino está sendo gravado perfeitamente. A transcrição completa e a ata executiva serão geradas pelo modelo de IA ({aiSettings.model}) quando você clicar em concluir.
-                  </p>
-                </div>
-              ) : liveTranscript ? (
-                <div className="space-y-1.5">
-                  {liveSegments.map((s) => (
-                    <div key={s.id} className="flex items-start gap-1.5">
-                      <span className="font-mono text-[10px] text-blue-400 font-bold shrink-0">
-                        [{s.timeFormatted}]
-                      </span>
-                      <p className="text-xs text-[#EDEDED]">{s.text}</p>
-                    </div>
-                  ))}
-                  {!liveSegments.length && <p className="whitespace-pre-wrap">{liveTranscript}</p>}
-                </div>
-              ) : (
-                <p className="text-[#6B7280] italic text-center pt-20 text-xs">
-                  {isRecording
-                    ? "Gravando áudio em segundo plano... Fale ou reproduza som no Windows para ver a transcrição em tempo real."
-                    : "A transcrição em tempo real contínua será exibida aqui durante a gravação."}
-                </p>
-              )}
-
-              {interimText && enableLiveBrowserSpeech && (
-                <span className="text-blue-400 italic bg-blue-500/10 px-1 rounded animate-pulse">
-                  {interimText}
-                </span>
-              )}
-              <div ref={transcriptEndRef} />
-            </div>
-          </div>
 
           {/* Quick Meeting Notepad & Tags */}
           <div className="bg-[#14161B] border border-[#22252D] rounded-xl p-4 shadow-sm space-y-2.5">
@@ -999,7 +1390,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 <FileText className="w-3.5 h-3.5 text-emerald-400" />
                 Anotações Rápidas & Pauta
               </label>
-              <span className="text-[10px] text-[#6B7280]">Salvo com o áudio</span>
+              <span className="text-[10px] text-[#6B7280]">Salvo com a gravação</span>
             </div>
 
             <textarea
@@ -1016,7 +1407,7 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
                 type="text"
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="Ex: Reunião, Diretoria, Financeiro, Windows"
+                placeholder="Ex: Reunião, Diretoria, Financeiro, Tela, Demo"
                 className="w-full bg-[#0E1015] border border-[#22252D] rounded-lg px-2.5 py-1 text-xs text-[#EDEDED] placeholder-[#6B7280] focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -1026,4 +1417,3 @@ export const LiveRecorderPanel: React.FC<LiveRecorderPanelProps> = ({
     </div>
   );
 };
-

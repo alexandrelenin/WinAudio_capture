@@ -285,7 +285,7 @@ app.post("/api/list-ai-models", async (req, res) => {
   }
 });
 
-// Dynamic System Prompt Builder according to Meeting Template
+// Dynamic System Prompt Builder according to Meeting Template with Advanced Speaker Diarization
 function buildAnalysisSystemPrompt(template: string = "general"): string {
   let templateInstructions = "";
 
@@ -336,16 +336,51 @@ FOCO: AULA, TREINAMENTO & ESTUDO
   - "glossary": Array de { "term": "...", "definition": "..." }.`;
   }
 
-  return `Você é um Analista de Reuniões, Especialista em Inteligência Executiva e Engenharia de Comunicação.
-Sua missão é processar a reunião fornecida e gerar uma análise completa, extremamente refinada e estruturada em JSON válido.
+  return `Você é um Especialista Sênior em Inteligência de Reuniões Corporativas, Diarização de Áudio Multimodal e Engenharia de Requisitos.
+Sua missão é processar a gravação/transcrição da reunião e gerar uma análise completa, precisa e estruturada em JSON válido.
+
+DIRETRIZES FUNDAMENTAIS DE IDENTIFICAÇÃO DE FALAS (SPEAKER DIARIZATION):
+1. SEPARAÇÃO DE CANAIS DE ÁUDIO:
+   - Se o áudio gravado utilizar 'dual_channels' (Separação Estéreo):
+     * O Canal Esquerdo (L / Ch 0) corresponde ao Microfone Local (Anfitrião / Você).
+     * O Canal Direito (R / Ch 1) corresponde ao Áudio do Google Meet / Zoom / Sistema (Participantes Remotos).
+   - Use essa separação física para distinguir com 100% de clareza quando o anfitrião está falando versus quando um colega remoto está falando.
+
+2. MAPEAMENTO DE NOMES DOS PARTICIPANTES:
+   - Verifique a lista de "Participantes" fornecida no prompt.
+   - Analise pistas contextuais da conversa (cumprimentos como "Bom dia Alexandre", referências a "Conforme a Mariana pontuou", transferências de palavra como "Carlos, você pode assumir essa parte?").
+   - Associe as vozes aos nomes reais dos participantes em "transcriptSegments" (campo "speaker"). Se não tiver certeza absoluta de um nome específico, use o rótulo mais informativo (ex: "Alexandre", "Beatriz", ou "Participante Remoto 1").
+
+3. CRUZAMENTO COM ANOTAÇÕES & LEGENDAS:
+   - Utilize as "Anotações Rápidas" e "Legendas / Closed Captions" fornecidas para desempatar termos técnicos, nomes próprios, deliberações e responsáveis pelas tarefas.
+
+4. ESTATÍSTICAS DE FALA ("speakerStats"):
+   - Calcule a distribuição estimada de tempo de fala para cada participante identificado.
 
 ${templateInstructions}
 
 Retorne SEMPRE estritamente um JSON estruturado com a seguinte estrutura geral (populando com excelência os campos relevantes ao template):
 {
-  "transcription": "Texto integral e limpo da transcrição",
+  "transcription": "Texto integral e limpo da transcrição com identificação dos locutores",
   "transcriptSegments": [
-    { "id": "seg-1", "startTime": 0, "endTime": 15, "timeFormatted": "00:00", "speaker": "Participante", "text": "Frase falada..." }
+    {
+      "id": "seg-1",
+      "startTime": 0,
+      "endTime": 15,
+      "timeFormatted": "00:00",
+      "speaker": "Nome do Participante",
+      "channel": "mic" | "system" | "mixed",
+      "text": "Frase dita pelo participante neste intervalo de tempo..."
+    }
+  ],
+  "participants": ["Nome 1 (Cargo/Papel)", "Nome 2"],
+  "speakerStats": [
+    {
+      "speaker": "Nome do Participante",
+      "segmentCount": 8,
+      "estimatedSeconds": 140,
+      "percentage": 45
+    }
   ],
   "executiveSummary": "Resumo executivo completo",
   "conciseSummary": "Resumo conciso dos pontos centrais debatidos",
@@ -403,7 +438,10 @@ app.post("/api/transcribe-and-summarize", async (req, res) => {
       mimeType,
       meetingTitle,
       duration,
+      participants,
+      sourceType = "dual_channels",
       offlineNotes,
+      closedCaptionsContext,
       tags,
       template = "general",
       aiSettings,
@@ -413,22 +451,27 @@ app.post("/api/transcribe-and-summarize", async (req, res) => {
       return res.status(400).json({ error: "É necessário fornecer a transcrição ou o áudio gravado." });
     }
 
-    const systemPrompt = `Você é um assistente executivo especializado em síntese de reuniões corporativas e transcrição.
+    const systemPrompt = `Você é um assistente executivo especializado em síntese de reuniões corporativas e diarização de locutores.
 Template da reunião: ${template.toUpperCase()}
-Sua tarefa é transcrever o áudio fornecido com timestamps precisos e gerar um resumo conciso e de alto valor dos pontos centrais discutidos na reunião adaptado ao template '${template}'.
+Sua tarefa é transcrever o áudio fornecido com timestamps precisos, identificar os locutores (usando nomes reais quando informados ou inferíveis pelo contexto) e gerar um resumo conciso de alto valor adaptado ao template '${template}'.
 
 Retorne estritamente um JSON estruturado com o formato:
 {
-  "transcription": "Texto integral da transcrição limpa.",
+  "transcription": "Texto integral da transcrição limpa com nomes dos locutores.",
   "transcriptSegments": [
     {
       "id": "seg-1",
       "startTime": 0,
       "endTime": 12,
       "timeFormatted": "00:00",
-      "speaker": "Participante 1",
+      "speaker": "Nome do Participante",
+      "channel": "mic" | "system" | "mixed",
       "text": "Frase falada neste intervalo de tempo..."
     }
+  ],
+  "participants": ["Participante 1", "Participante 2"],
+  "speakerStats": [
+    { "speaker": "Nome", "segmentCount": 5, "estimatedSeconds": 80, "percentage": 50 }
   ],
   "conciseSummary": "Resumo conciso dos pontos centrais em 2 a 3 parágrafos diretos.",
   "formalMinutes": "Ata resumida da reunião com abertura, deliberações e encerramento.",
@@ -442,11 +485,14 @@ Retorne estritamente um JSON estruturado com o formato:
     const promptText = `Reunião: "${meetingTitle || "Reunião de Alinhamento"}"
 Tipo/Template: ${template}
 Duração aproximada: ${duration || "N/A"}
+Modo de Captura de Áudio: ${sourceType === "dual_channels" ? "Separação de Canais Estéreo (L = Microfone do Anfitrião, R = Google Meet / Participantes Remotos)" : sourceType}
+${participants && (Array.isArray(participants) ? participants.length : participants.trim()) ? `Relação de Participantes Informados: ${Array.isArray(participants) ? participants.join(", ") : participants}` : ""}
 ${transcript ? `Transcrição preliminar capturada offline: """${transcript}"""` : ""}
-${offlineNotes ? `Anotações rápidas: """${offlineNotes}"""` : ""}
+${offlineNotes ? `Anotações rápidas tomadas durante a reunião: """${offlineNotes}"""` : ""}
+${closedCaptionsContext ? `Legendas do Google Meet / Closed Captions: """${closedCaptionsContext}"""` : ""}
 ${tags && tags.length ? `Tags: ${tags.join(", ")}` : ""}
 
-Por favor, gere a transcrição segmentada por timecodes e o resumo conciso dos pontos discutidos e decisões tomadas em formato JSON válido.`;
+Por favor, realize a transcrição com diarização de locutores (atribuindo os nomes corretos a cada fala), timecodes e o resumo conciso dos pontos discutidos em formato JSON válido.`;
 
     const rawResponse = await executeAIRequest({
       provider: aiSettings?.provider || "gemini_server",
@@ -496,7 +542,10 @@ app.post("/api/analyze-meeting", async (req, res) => {
       mimeType,
       meetingTitle,
       duration,
+      participants,
+      sourceType = "dual_channels",
       offlineNotes,
+      closedCaptionsContext,
       tags,
       template = "general",
       aiSettings,
@@ -511,11 +560,14 @@ app.post("/api/analyze-meeting", async (req, res) => {
     const promptText = `Reunião: "${meetingTitle || "Reunião de Alinhamento"}"
 Template Selecionado: ${template}
 Duração estimada: ${duration || "N/A"}
+Modo de Áudio: ${sourceType === "dual_channels" ? "Separação de Canais Estéreo (Canal E/0 = Microfone do Anfitrião, Canal D/1 = Google Meet / Áudio Remoto)" : sourceType}
+${participants && (Array.isArray(participants) ? participants.length : participants.trim()) ? `Participantes da Reunião: ${Array.isArray(participants) ? participants.join(", ") : participants}` : ""}
 ${transcript ? `Transcrição registrada: """${transcript}"""` : ""}
-${offlineNotes ? `Anotações tomadas durante a reunião: """${offlineNotes}"""` : ""}
+${offlineNotes ? `Anotações tomadas durante a reunião (pauta, itens e observações): """${offlineNotes}"""` : ""}
+${closedCaptionsContext ? `Legendas do Google Meet / Closed Captions copiadas: """${closedCaptionsContext}"""` : ""}
 ${tags && tags.length ? `Tags contextuais: ${tags.join(", ")}` : ""}
 
-Analise detalhadamente o conteúdo desta reunião de acordo com o template '${template}' e retorne estritamente o JSON estruturado contendo a transcrição segmentada, resumo, ata/decisões, requisitos ou insights específicos do template.`;
+Analise detalhadamente o conteúdo desta reunião de acordo com o template '${template}'. Execute a diarização das falas associando as vozes e canais aos participantes reais, cruze com as anotações e retorne estritamente o JSON estruturado contendo a transcrição segmentada por locutor, resumo, ata/decisões, estatísticas de participação e requisitos específicos.`;
 
     const rawResponse = await executeAIRequest({
       provider: aiSettings?.provider || "gemini_server",
